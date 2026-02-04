@@ -1,0 +1,304 @@
+import os
+from datetime import datetime
+from typing import Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from dotenv import load_dotenv
+
+from . import database as db
+from .telegram_client import init_telegram_manager, get_telegram_manager
+from .summarizer import init_summarizer, get_summarizer
+from .models import (
+    AccountCreateRequest, AccountVerifyRequest,
+    ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest
+)
+
+load_dotenv()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await db.init_db()
+
+    api_id = os.getenv('TELEGRAM_API_ID')
+    api_hash = os.getenv('TELEGRAM_API_HASH')
+    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+
+    if api_id and api_hash:
+        init_telegram_manager(int(api_id), api_hash)
+
+    if anthropic_key:
+        init_summarizer(anthropic_key)
+
+    yield
+
+    # Shutdown
+    try:
+        tm = get_telegram_manager()
+        await tm.close_all()
+    except RuntimeError:
+        pass
+
+
+app = FastAPI(
+    title="Telegram Chat Summarizer",
+    description="Приложение для мониторинга и суммаризации чатов Telegram",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Templates
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
+
+# ============== HTML Pages ==============
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+# ============== Account Endpoints ==============
+
+@app.get("/api/accounts")
+async def get_accounts():
+    """Get all Telegram accounts"""
+    accounts = await db.get_accounts()
+    return {"accounts": accounts}
+
+
+@app.post("/api/accounts")
+async def create_account(data: AccountCreateRequest):
+    """Create a new Telegram account"""
+    account_id = await db.create_account(data.phone, data.name)
+    return {"id": account_id, "message": "Account created"}
+
+
+@app.delete("/api/accounts/{account_id}")
+async def delete_account(account_id: int):
+    """Delete a Telegram account"""
+    try:
+        tm = get_telegram_manager()
+        await tm.disconnect_account(account_id)
+    except RuntimeError:
+        pass
+    await db.delete_account(account_id)
+    return {"message": "Account deleted"}
+
+
+@app.post("/api/accounts/{account_id}/auth/start")
+async def start_auth(account_id: int):
+    """Start Telegram authentication"""
+    account = await db.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    try:
+        tm = get_telegram_manager()
+        result = await tm.start_auth(account_id, account['phone'])
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/accounts/{account_id}/auth/verify")
+async def verify_auth(account_id: int, data: AccountVerifyRequest):
+    """Complete Telegram authentication with code"""
+    try:
+        tm = get_telegram_manager()
+        result = await tm.complete_auth(account_id, data.code, data.password)
+
+        if result['status'] == 'success':
+            await db.update_account_authorized(account_id, True)
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/accounts/{account_id}/sync")
+async def sync_account_chats(account_id: int):
+    """Sync chats from Telegram account"""
+    account = await db.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    try:
+        tm = get_telegram_manager()
+        dialogs = await tm.get_dialogs(account_id)
+
+        synced = 0
+        for dialog in dialogs:
+            await db.upsert_chat(
+                telegram_id=dialog['telegram_id'],
+                account_id=account_id,
+                original_title=dialog['title']
+            )
+            synced += 1
+
+        return {"message": f"Synced {synced} chats", "count": synced}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Complex (ЖК) Endpoints ==============
+
+@app.get("/api/complexes")
+async def get_complexes():
+    """Get all residential complexes"""
+    complexes = await db.get_complexes()
+    return {"complexes": complexes}
+
+
+@app.post("/api/complexes")
+async def create_complex(data: ComplexCreateRequest):
+    """Create a new residential complex"""
+    complex_id = await db.create_complex(data.name)
+    return {"id": complex_id, "message": "Complex created"}
+
+
+@app.put("/api/complexes/{complex_id}")
+async def update_complex(complex_id: int, data: ComplexCreateRequest):
+    """Update a residential complex"""
+    await db.update_complex(complex_id, data.name)
+    return {"message": "Complex updated"}
+
+
+@app.delete("/api/complexes/{complex_id}")
+async def delete_complex(complex_id: int):
+    """Delete a residential complex"""
+    await db.delete_complex(complex_id)
+    return {"message": "Complex deleted"}
+
+
+# ============== Chat Endpoints ==============
+
+@app.get("/api/chats")
+async def get_chats(account_id: Optional[int] = None, complex_id: Optional[int] = None,
+                    monitored_only: bool = False):
+    """Get chats with optional filters"""
+    chats = await db.get_chats(account_id, complex_id, monitored_only)
+    return {"chats": chats}
+
+
+@app.get("/api/chats/{chat_id}")
+async def get_chat(chat_id: int):
+    """Get a specific chat"""
+    chat = await db.get_chat(chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return chat
+
+
+@app.put("/api/chats/{chat_id}")
+async def update_chat(chat_id: int, data: ChatUpdateRequest):
+    """Update chat settings"""
+    await db.update_chat(
+        chat_id,
+        custom_name=data.custom_name,
+        complex_id=data.complex_id,
+        is_monitored=data.is_monitored
+    )
+    return {"message": "Chat updated"}
+
+
+# ============== Report Generation ==============
+
+@app.post("/api/reports/generate")
+async def generate_report(data: GenerateReportRequest):
+    """Generate a summary report for selected complexes"""
+    try:
+        tm = get_telegram_manager()
+        summarizer = get_summarizer()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Get all monitored chats grouped by complex
+    chats_by_complex = await db.get_monitored_chats_by_complex()
+
+    # Filter by requested complexes
+    if data.complex_ids:
+        chats_by_complex = {
+            k: v for k, v in chats_by_complex.items()
+            if k in data.complex_ids
+        }
+
+    if not chats_by_complex:
+        raise HTTPException(status_code=400, detail="No monitored chats found")
+
+    report = {
+        'generated_at': datetime.now().isoformat(),
+        'period_start': data.start_date.isoformat(),
+        'period_end': data.end_date.isoformat(),
+        'complexes': []
+    }
+
+    for complex_id, chats in chats_by_complex.items():
+        complex_data = {
+            'complex_id': complex_id,
+            'complex_name': chats[0]['complex_name'] if chats else 'Unknown',
+            'chats': []
+        }
+
+        for chat in chats:
+            # Get messages from Telegram
+            messages = await tm.get_messages(
+                account_id=chat['account_id'],
+                chat_telegram_id=chat['telegram_id'],
+                start_date=data.start_date,
+                end_date=data.end_date
+            )
+
+            chat_name = chat['custom_name'] or chat['original_title']
+
+            # Generate summary
+            summary = await summarizer.summarize_chat(
+                messages=messages,
+                chat_name=chat_name,
+                complex_name=complex_data['complex_name'],
+                start_date=data.start_date,
+                end_date=data.end_date
+            )
+
+            complex_data['chats'].append({
+                'chat_id': chat['id'],
+                'chat_name': chat_name,
+                'original_title': chat['original_title'],
+                'message_count': len(messages),
+                **summary
+            })
+
+        report['complexes'].append(complex_data)
+
+    return report
+
+
+# ============== Health Check ==============
+
+@app.get("/api/health")
+async def health_check():
+    """Check application health"""
+    status = {
+        'status': 'ok',
+        'telegram_configured': False,
+        'summarizer_configured': False
+    }
+
+    try:
+        get_telegram_manager()
+        status['telegram_configured'] = True
+    except RuntimeError:
+        pass
+
+    try:
+        get_summarizer()
+        status['summarizer_configured'] = True
+    except RuntimeError:
+        pass
+
+    return status

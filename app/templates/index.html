@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Chat Summarizer</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: #2196F3;
+            color: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+
+        header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            padding: 12px 24px;
+            border: none;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tab-btn:hover {
+            background: #e3f2fd;
+        }
+
+        .tab-btn.active {
+            background: #2196F3;
+            color: white;
+        }
+
+        .panel {
+            display: none;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1976D2;
+        }
+
+        .btn-success {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #388E3C;
+        }
+
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #d32f2f;
+        }
+
+        .btn-secondary {
+            background: #9e9e9e;
+            color: white;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        input, select {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+
+        .card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .card-title {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .card-subtitle {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .badge-warning {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+
+        .badge-info {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .chat-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .chat-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: white;
+        }
+
+        .chat-item.monitored {
+            border-color: #4CAF50;
+            background: #f1f8e9;
+        }
+
+        .chat-checkbox {
+            width: 20px;
+            height: 20px;
+        }
+
+        .chat-info {
+            flex: 1;
+        }
+
+        .chat-title {
+            font-weight: 500;
+        }
+
+        .chat-meta {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+        }
+
+        .report-section {
+            margin-bottom: 30px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .report-header {
+            background: #2196F3;
+            color: white;
+            padding: 15px;
+            font-size: 18px;
+        }
+
+        .report-chat {
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .report-chat:last-child {
+            border-bottom: none;
+        }
+
+        .report-chat-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .report-content {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            color: #444;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2196F3;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef9a9a;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+        }
+
+        .date-inputs {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .date-inputs .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab-btn {
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Telegram Chat Summarizer</h1>
+            <p>Мониторинг и суммаризация чатов строительных объектов</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="accounts">Аккаунты</button>
+            <button class="tab-btn" data-tab="complexes">ЖК (Объекты)</button>
+            <button class="tab-btn" data-tab="chats">Чаты</button>
+            <button class="tab-btn" data-tab="reports">Сводка</button>
+        </div>
+
+        <!-- Accounts Panel -->
+        <div id="accounts-panel" class="panel active">
+            <div class="section">
+                <h2 class="section-title">
+                    Telegram аккаунты
+                    <button class="btn btn-primary btn-small" onclick="showAddAccountModal()">+ Добавить</button>
+                </h2>
+                <div id="accounts-list"></div>
+            </div>
+        </div>
+
+        <!-- Complexes Panel -->
+        <div id="complexes-panel" class="panel">
+            <div class="section">
+                <h2 class="section-title">
+                    Жилые комплексы
+                    <button class="btn btn-primary btn-small" onclick="showAddComplexModal()">+ Добавить</button>
+                </h2>
+                <div id="complexes-list"></div>
+            </div>
+        </div>
+
+        <!-- Chats Panel -->
+        <div id="chats-panel" class="panel">
+            <div class="section">
+                <div class="input-group">
+                    <select id="chats-account-filter" onchange="loadChats()">
+                        <option value="">Все аккаунты</option>
+                    </select>
+                    <select id="chats-complex-filter" onchange="loadChats()">
+                        <option value="">Все ЖК</option>
+                    </select>
+                    <label style="display: flex; align-items: center; gap: 5px;">
+                        <input type="checkbox" id="chats-monitored-filter" onchange="loadChats()">
+                        Только мониторинг
+                    </label>
+                </div>
+                <div id="chats-list" class="chat-list"></div>
+            </div>
+        </div>
+
+        <!-- Reports Panel -->
+        <div id="reports-panel" class="panel">
+            <div class="section">
+                <h2 class="section-title">Генерация сводки</h2>
+
+                <div class="form-group">
+                    <label>Выберите ЖК:</label>
+                    <div id="report-complexes"></div>
+                </div>
+
+                <div class="date-inputs">
+                    <div class="form-group">
+                        <label>Начало периода:</label>
+                        <input type="datetime-local" id="report-start-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Конец периода:</label>
+                        <input type="datetime-local" id="report-end-date">
+                    </div>
+                </div>
+
+                <button class="btn btn-success" onclick="generateReport()">Сформировать сводку</button>
+            </div>
+
+            <div id="report-loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Генерация сводки... Это может занять несколько минут.</p>
+            </div>
+
+            <div id="report-result"></div>
+        </div>
+    </div>
+
+    <!-- Add Account Modal -->
+    <div id="add-account-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Добавить Telegram аккаунт</h3>
+            <div class="form-group">
+                <label>Название (для себя):</label>
+                <input type="text" id="account-name" placeholder="Например: Мой основной">
+            </div>
+            <div class="form-group">
+                <label>Номер телефона:</label>
+                <input type="tel" id="account-phone" placeholder="+7XXXXXXXXXX">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="createAccount()">Добавить</button>
+                <button class="btn btn-secondary" onclick="closeModal('add-account-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Авторизация Telegram</h3>
+            <p id="auth-message" style="margin-bottom: 15px;"></p>
+            <div class="form-group">
+                <label>Код из Telegram:</label>
+                <input type="text" id="auth-code" placeholder="12345">
+            </div>
+            <div class="form-group" id="auth-password-group" style="display: none;">
+                <label>Пароль 2FA (если есть):</label>
+                <input type="password" id="auth-password">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="verifyAuth()">Подтвердить</button>
+                <button class="btn btn-secondary" onclick="closeModal('auth-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Complex Modal -->
+    <div id="add-complex-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Добавить ЖК</h3>
+            <div class="form-group">
+                <label>Название ЖК:</label>
+                <input type="text" id="complex-name" placeholder="Например: ЖК Солнечный">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="createComplex()">Добавить</button>
+                <button class="btn btn-secondary" onclick="closeModal('add-complex-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Chat Modal -->
+    <div id="edit-chat-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Настройки чата</h3>
+            <input type="hidden" id="edit-chat-id">
+            <div class="form-group">
+                <label>Оригинальное название:</label>
+                <p id="edit-chat-original" style="color: #666;"></p>
+            </div>
+            <div class="form-group">
+                <label>Своё название (опционально):</label>
+                <input type="text" id="edit-chat-name" placeholder="Оставьте пустым для оригинального">
+            </div>
+            <div class="form-group">
+                <label>Привязать к ЖК:</label>
+                <select id="edit-chat-complex"></select>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="edit-chat-monitored">
+                    Включить мониторинг
+                </label>
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="saveChat()">Сохранить</button>
+                <button class="btn btn-secondary" onclick="closeModal('edit-chat-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentAuthAccountId = null;
+
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab + '-panel').classList.add('active');
+
+                // Load data for the tab
+                if (btn.dataset.tab === 'accounts') loadAccounts();
+                if (btn.dataset.tab === 'complexes') loadComplexes();
+                if (btn.dataset.tab === 'chats') {
+                    loadAccountsForFilter();
+                    loadComplexesForFilter();
+                    loadChats();
+                }
+                if (btn.dataset.tab === 'reports') loadReportComplexes();
+            });
+        });
+
+        // Modal functions
+        function showModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function showAddAccountModal() {
+            document.getElementById('account-name').value = '';
+            document.getElementById('account-phone').value = '';
+            showModal('add-account-modal');
+        }
+
+        function showAddComplexModal() {
+            document.getElementById('complex-name').value = '';
+            showModal('add-complex-modal');
+        }
+
+        // API calls
+        async function api(url, method = 'GET', data = null) {
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (data) options.body = JSON.stringify(data);
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'API Error');
+            }
+            return response.json();
+        }
+
+        // Accounts
+        async function loadAccounts() {
+            const container = document.getElementById('accounts-list');
+            try {
+                const data = await api('/api/accounts');
+                if (data.accounts.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет добавленных аккаунтов</div>';
+                    return;
+                }
+                container.innerHTML = data.accounts.map(acc => `
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">${acc.name}</div>
+                                <div class="card-subtitle">${acc.phone}</div>
+                            </div>
+                            <div>
+                                ${acc.is_authorized
+                                    ? '<span class="badge badge-success">Авторизован</span>'
+                                    : '<span class="badge badge-warning">Не авторизован</span>'}
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            ${!acc.is_authorized
+                                ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
+                                : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать чаты</button>`}
+                            <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        async function createAccount() {
+            const name = document.getElementById('account-name').value;
+            const phone = document.getElementById('account-phone').value;
+            if (!name || !phone) {
+                alert('Заполните все поля');
+                return;
+            }
+            try {
+                await api('/api/accounts', 'POST', { name, phone });
+                closeModal('add-account-modal');
+                loadAccounts();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteAccount(id) {
+            if (!confirm('Удалить аккаунт?')) return;
+            try {
+                await api(`/api/accounts/${id}`, 'DELETE');
+                loadAccounts();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function startAuth(accountId) {
+            currentAuthAccountId = accountId;
+            try {
+                const result = await api(`/api/accounts/${accountId}/auth/start`, 'POST');
+                document.getElementById('auth-message').textContent =
+                    'Код отправлен в Telegram. Введите его ниже:';
+                document.getElementById('auth-code').value = '';
+                document.getElementById('auth-password').value = '';
+                document.getElementById('auth-password-group').style.display = 'none';
+                showModal('auth-modal');
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function verifyAuth() {
+            const code = document.getElementById('auth-code').value;
+            const password = document.getElementById('auth-password').value;
+            try {
+                const result = await api(`/api/accounts/${currentAuthAccountId}/auth/verify`, 'POST', {
+                    account_id: currentAuthAccountId,
+                    code,
+                    password: password || null
+                });
+
+                if (result.status === 'password_required') {
+                    document.getElementById('auth-message').textContent =
+                        'Требуется пароль двухфакторной аутентификации:';
+                    document.getElementById('auth-password-group').style.display = 'block';
+                    return;
+                }
+
+                if (result.status === 'success') {
+                    closeModal('auth-modal');
+                    loadAccounts();
+                    alert('Авторизация успешна!');
+                } else {
+                    alert('Ошибка: ' + (result.message || 'Неизвестная ошибка'));
+                }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function syncChats(accountId) {
+            try {
+                const result = await api(`/api/accounts/${accountId}/sync`, 'POST');
+                alert(`Синхронизировано чатов: ${result.count}`);
+                loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Complexes
+        async function loadComplexes() {
+            const container = document.getElementById('complexes-list');
+            try {
+                const data = await api('/api/complexes');
+                if (data.complexes.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет добавленных ЖК</div>';
+                    return;
+                }
+                container.innerHTML = data.complexes.map(c => `
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">${c.name}</div>
+                            <button class="btn btn-danger btn-small" onclick="deleteComplex(${c.id})">Удалить</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        async function createComplex() {
+            const name = document.getElementById('complex-name').value;
+            if (!name) {
+                alert('Введите название');
+                return;
+            }
+            try {
+                await api('/api/complexes', 'POST', { name });
+                closeModal('add-complex-modal');
+                loadComplexes();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteComplex(id) {
+            if (!confirm('Удалить ЖК?')) return;
+            try {
+                await api(`/api/complexes/${id}`, 'DELETE');
+                loadComplexes();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Chats
+        async function loadAccountsForFilter() {
+            const select = document.getElementById('chats-account-filter');
+            const data = await api('/api/accounts');
+            select.innerHTML = '<option value="">Все аккаунты</option>' +
+                data.accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+        }
+
+        async function loadComplexesForFilter() {
+            const select = document.getElementById('chats-complex-filter');
+            const editSelect = document.getElementById('edit-chat-complex');
+            const data = await api('/api/complexes');
+
+            const options = '<option value="">Не привязан</option>' +
+                data.complexes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+            select.innerHTML = '<option value="">Все ЖК</option>' +
+                data.complexes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            editSelect.innerHTML = options;
+        }
+
+        async function loadChats() {
+            const container = document.getElementById('chats-list');
+            const accountId = document.getElementById('chats-account-filter').value;
+            const complexId = document.getElementById('chats-complex-filter').value;
+            const monitoredOnly = document.getElementById('chats-monitored-filter').checked;
+
+            let url = '/api/chats?';
+            if (accountId) url += `account_id=${accountId}&`;
+            if (complexId) url += `complex_id=${complexId}&`;
+            if (monitoredOnly) url += `monitored_only=true`;
+
+            try {
+                const data = await api(url);
+                if (data.chats.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет чатов. Синхронизируйте аккаунты.</div>';
+                    return;
+                }
+                container.innerHTML = data.chats.map(chat => `
+                    <div class="chat-item ${chat.is_monitored ? 'monitored' : ''}">
+                        <div class="chat-info">
+                            <div class="chat-title">${chat.custom_name || chat.original_title}</div>
+                            <div class="chat-meta">
+                                ${chat.custom_name ? `<span>Оригинал: ${chat.original_title}</span> | ` : ''}
+                                <span>Аккаунт: ${chat.account_name}</span>
+                                ${chat.complex_name ? ` | <span class="badge badge-info">${chat.complex_name}</span>` : ''}
+                            </div>
+                        </div>
+                        <div>
+                            ${chat.is_monitored
+                                ? '<span class="badge badge-success">Мониторинг</span>'
+                                : ''}
+                            <button class="btn btn-primary btn-small" onclick="editChat(${chat.id})">Настроить</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        async function editChat(chatId) {
+            try {
+                const chat = await api(`/api/chats/${chatId}`);
+                document.getElementById('edit-chat-id').value = chatId;
+                document.getElementById('edit-chat-original').textContent = chat.original_title;
+                document.getElementById('edit-chat-name').value = chat.custom_name || '';
+                document.getElementById('edit-chat-complex').value = chat.complex_id || '';
+                document.getElementById('edit-chat-monitored').checked = chat.is_monitored;
+                showModal('edit-chat-modal');
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function saveChat() {
+            const chatId = document.getElementById('edit-chat-id').value;
+            const customName = document.getElementById('edit-chat-name').value;
+            const complexId = document.getElementById('edit-chat-complex').value;
+            const isMonitored = document.getElementById('edit-chat-monitored').checked;
+
+            try {
+                await api(`/api/chats/${chatId}`, 'PUT', {
+                    custom_name: customName || null,
+                    complex_id: complexId ? parseInt(complexId) : 0,
+                    is_monitored: isMonitored
+                });
+                closeModal('edit-chat-modal');
+                loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Reports
+        async function loadReportComplexes() {
+            const container = document.getElementById('report-complexes');
+            try {
+                const data = await api('/api/complexes');
+                if (data.complexes.length === 0) {
+                    container.innerHTML = '<p>Сначала добавьте ЖК</p>';
+                    return;
+                }
+                container.innerHTML = data.complexes.map(c => `
+                    <label style="display: block; margin: 5px 0;">
+                        <input type="checkbox" class="report-complex-checkbox" value="${c.id}" checked>
+                        ${c.name}
+                    </label>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+
+            // Set default dates (last 24 hours)
+            const now = new Date();
+            const yesterday = new Date(now - 24 * 60 * 60 * 1000);
+            document.getElementById('report-end-date').value = formatDateForInput(now);
+            document.getElementById('report-start-date').value = formatDateForInput(yesterday);
+        }
+
+        function formatDateForInput(date) {
+            return date.toISOString().slice(0, 16);
+        }
+
+        async function generateReport() {
+            const checkboxes = document.querySelectorAll('.report-complex-checkbox:checked');
+            const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            const startDate = document.getElementById('report-start-date').value;
+            const endDate = document.getElementById('report-end-date').value;
+
+            if (complexIds.length === 0) {
+                alert('Выберите хотя бы один ЖК');
+                return;
+            }
+
+            if (!startDate || !endDate) {
+                alert('Выберите период');
+                return;
+            }
+
+            const loadingEl = document.getElementById('report-loading');
+            const resultEl = document.getElementById('report-result');
+
+            loadingEl.style.display = 'block';
+            resultEl.innerHTML = '';
+
+            try {
+                const report = await api('/api/reports/generate', 'POST', {
+                    complex_ids: complexIds,
+                    start_date: new Date(startDate).toISOString(),
+                    end_date: new Date(endDate).toISOString()
+                });
+
+                loadingEl.style.display = 'none';
+                renderReport(report);
+            } catch (e) {
+                loadingEl.style.display = 'none';
+                resultEl.innerHTML = `<div class="alert alert-error">Ошибка: ${e.message}</div>`;
+            }
+        }
+
+        function renderReport(report) {
+            const container = document.getElementById('report-result');
+
+            if (report.complexes.length === 0) {
+                container.innerHTML = '<div class="empty-state">Нет данных для отчёта</div>';
+                return;
+            }
+
+            let html = `
+                <div class="alert alert-success">
+                    Сводка сгенерирована: ${new Date(report.generated_at).toLocaleString()}<br>
+                    Период: ${new Date(report.period_start).toLocaleString()} - ${new Date(report.period_end).toLocaleString()}
+                </div>
+            `;
+
+            for (const complex of report.complexes) {
+                html += `
+                    <div class="report-section">
+                        <div class="report-header">${complex.complex_name}</div>
+                `;
+
+                for (const chat of complex.chats) {
+                    html += `
+                        <div class="report-chat">
+                            <div class="report-chat-title">
+                                ${chat.chat_name}
+                                <span class="badge badge-info">${chat.message_count} сообщений</span>
+                                <span class="badge ${getSentimentBadge(chat.overall_sentiment)}">${chat.overall_sentiment}</span>
+                            </div>
+                            <div class="report-content">${escapeHtml(chat.summary_text)}</div>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function getSentimentBadge(sentiment) {
+            if (sentiment.includes('негатив')) return 'badge-warning';
+            if (sentiment.includes('позитив')) return 'badge-success';
+            return 'badge-info';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/\n/g, '<br>');
+        }
+
+        // Initial load
+        loadAccounts();
+    </script>
+</body>
+</html>
