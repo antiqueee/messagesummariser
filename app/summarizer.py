@@ -1,7 +1,12 @@
 import json
 from datetime import datetime
 from typing import Optional
-import anthropic
+
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except Exception:
+    HAS_ANTHROPIC = False
 
 
 SUMMARIZATION_PROMPT = """Ты - аналитик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов).
@@ -65,7 +70,16 @@ SUMMARIZATION_PROMPT = """Ты - аналитик, специализирующ�
 
 class ChatSummarizer:
     def __init__(self, api_key: str):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.api_key = api_key
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            if not HAS_ANTHROPIC:
+                raise RuntimeError("Библиотека anthropic не установлена или несовместима. Выполните: pip install --upgrade anthropic")
+            self._client = anthropic.Anthropic(api_key=self.api_key)
+        return self._client
 
     def _format_messages(self, messages: list[dict]) -> str:
         """Format messages for the prompt"""

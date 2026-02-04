@@ -33,7 +33,10 @@ async def lifespan(app: FastAPI):
         init_telegram_manager(int(api_id), api_hash)
 
     if anthropic_key:
-        init_summarizer(anthropic_key)
+        try:
+            init_summarizer(anthropic_key)
+        except Exception as e:
+            print(f"WARNING: Summarizer init skipped ({e}). Summarization will be available later.")
 
     yield
 
