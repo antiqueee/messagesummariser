@@ -163,21 +163,30 @@ class TelegramClientManager:
         """Get messages from a chat within a date range"""
         client = await self.get_client(account_id)
         if not client:
+            print(f"[get_messages] No client for account {account_id}")
             return []
+
+        # Strip timezone info for consistent comparison
+        start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
+        end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
+
+        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}")
 
         messages = []
 
         try:
             async for message in client.iter_messages(
                     chat_telegram_id,
-                    offset_date=end_date,
+                    offset_date=end_naive,
                     reverse=False,
                     limit=limit
             ):
-                if message.date.replace(tzinfo=None) < start_date:
+                msg_date = message.date.replace(tzinfo=None)
+
+                if msg_date < start_naive:
                     break
 
-                if message.date.replace(tzinfo=None) > end_date:
+                if msg_date > end_naive:
                     continue
 
                 # Skip non-text messages
@@ -202,12 +211,16 @@ class TelegramClientManager:
                     'sender_id': sender_id,
                     'sender_name': sender_name,
                     'text': message.text,
-                    'date': message.date.replace(tzinfo=None).isoformat(),
+                    'date': msg_date.isoformat(),
                     'reply_to': message.reply_to_msg_id
                 })
 
+            print(f"[get_messages] Found {len(messages)} messages")
+
         except Exception as e:
-            print(f"Error fetching messages: {e}")
+            print(f"[get_messages] Error fetching messages: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
         # Return in chronological order
