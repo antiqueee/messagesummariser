@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from . import database as db
 from .telegram_client import init_telegram_manager, get_telegram_manager
-from .summarizer import init_summarizer, get_summarizer
+from .summarizer import init_summarizer, get_summarizer, get_report_rules
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest
@@ -214,11 +214,18 @@ async def update_chat(chat_id: int, data: ChatUpdateRequest):
 
 @app.post("/api/reports/generate")
 async def generate_report(data: GenerateReportRequest):
-    """Generate a report with raw messages for selected complexes"""
+    """Generate a report for selected complexes — AI summary if available, raw messages otherwise"""
     try:
         tm = get_telegram_manager()
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Check if AI summarizer is available
+    summarizer = None
+    try:
+        summarizer = get_summarizer()
+    except RuntimeError:
+        pass
 
     # Get all monitored chats grouped by complex
     chats_by_complex = await db.get_monitored_chats_by_complex()
@@ -237,15 +244,20 @@ async def generate_report(data: GenerateReportRequest):
         'generated_at': datetime.now().isoformat(),
         'period_start': data.start_date.isoformat(),
         'period_end': data.end_date.isoformat(),
+        'mode': 'ai' if summarizer else 'raw',
         'complexes': []
     }
 
     for complex_id, chats in chats_by_complex.items():
+        complex_name = chats[0]['complex_name'] if chats else 'Unknown'
+
         complex_data = {
             'complex_id': complex_id,
-            'complex_name': chats[0]['complex_name'] if chats else 'Unknown',
+            'complex_name': complex_name,
             'chats': []
         }
+
+        chats_with_messages = []
 
         for chat in chats:
             # Get messages from Telegram
@@ -258,17 +270,44 @@ async def generate_report(data: GenerateReportRequest):
 
             chat_name = chat['custom_name'] or chat['original_title']
 
-            complex_data['chats'].append({
+            chat_data = {
                 'chat_id': chat['id'],
                 'chat_name': chat_name,
                 'original_title': chat['original_title'],
                 'message_count': len(messages),
                 'messages': messages
+            }
+
+            complex_data['chats'].append(chat_data)
+            chats_with_messages.append({
+                'chat_name': chat_name,
+                'messages': messages
             })
+
+        # If AI is available, generate summary for the whole complex
+        if summarizer:
+            try:
+                summary_text = await summarizer.summarize_complex(
+                    complex_name=complex_name,
+                    chats_with_messages=chats_with_messages,
+                    start_date=data.start_date,
+                    end_date=data.end_date
+                )
+                complex_data['summary'] = summary_text
+            except Exception as e:
+                complex_data['summary'] = f'Ошибка AI-суммаризации: {str(e)}'
 
         report['complexes'].append(complex_data)
 
     return report
+
+
+# ============== Report Rules ==============
+
+@app.get("/api/report-rules")
+async def get_rules():
+    """Get the report generation rules text"""
+    return {"rules": get_report_rules()}
 
 
 # ============== Health Check ==============

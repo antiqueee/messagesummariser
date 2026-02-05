@@ -9,53 +9,66 @@ except Exception:
     HAS_ANTHROPIC = False
 
 
-SUMMARIZATION_PROMPT = """Ты - аналитик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов).
+SYSTEM_PROMPT = """Ты — аналитик-разведчик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов). Ты составляешь аналитические отчеты по строгому регламенту.
 
-Проанализируй переписку из чата и создай ПОДРОБНУЮ сводку со следующей структурой:
+РЕГЛАМЕНТ СОСТАВЛЕНИЯ АНАЛИТИЧЕСКИХ ОТЧЕТОВ:
 
-## Общее настроение чата
-Оцени общий тон обсуждений: позитивный, нейтральный, негативный или смешанный.
+1. ЯЗЫК И СТИЛЬ («Человеческий отчет»)
+Отчет пишется живым, человеческим языком, как связное повествование. Никаких сухих сводок или логов событий.
+- Как надо: «В корпусе 17 сегодня настоящий взрыв: люди в ярости от того, что на фотоотчетах отделка выглядит брошенной. Весь день обсуждают, как их обманули со сроками, и атмосфера очень токсичная».
+- Как не надо: «Корпус 17. Массовый негатив. Сроки сдачи. 150 сообщений».
 
-## Негативные события и проблемы
-Перечисли ВСЕ негативные события, жалобы и проблемы, которые обсуждались. Для каждого события укажи:
-- Суть проблемы
-- Кто поднял вопрос (имя или никнейм)
-- Реакция других участников
-- Была ли проблема решена или нет
+2. КЛАССИФИКАЦИЯ НЕГАТИВА (Важнейший пункт)
+Строго разделяй эмоциональный фон и конкретные претензии.
 
-## Персонажи, распространяющие негатив
-Определи людей, которые:
-- Систематически жалуются
-- Разжигают конфликты
-- Распространяют негативные настроения
-- Провоцируют других участников
+Фоновый негатив — это общая токсичность, «ворчание» или привычные оскорбления, НЕ привязанные к свежему событию.
+Примеры: «Самолет — гниды», «Опять всё через одно место», «Мы должны были заехать ещё год назад, уроды».
+Как записываем: «Присутствует фоновый негатив в сторону застройщика, жильцы просто по привычке ругают компанию за старые обиды».
 
-Для каждого такого человека укажи:
-- Имя/никнейм
-- Характер его негативных высказываний
-- Примеры (цитаты)
-- Частота негативных сообщений
+Обычный негатив — реакция на конкретный факт, косяк или новость.
+Примеры: фотография плесени на стене, видео с текущей батареей, новость о переносе сроков, закрытие продаж.
+Как записываем: Подробно. «В чате вспышка негатива из-за опубликованных фото плесени в 4 секции. Люди в бешенстве, кроют застройщика матом и требуют немедленно вызвать бригаду для очистки, иначе обещают не принимать квартиры».
 
-## Основные темы обсуждений
-Перечисли все темы, которые обсуждались в чате, с краткой характеристикой.
+3. ДЕТАЛИЗАЦИЯ ОФЛАЙН-РИСКОВ (Приоритет №1)
+Любое действие, выходящее за рамки «просто поговорить в Telegram», описывается МАКСИМАЛЬНО детально.
+Что фиксируем:
+- Сборы: дата, время, точное место (у КПП, у Офиса Заселения, у Библиотеки и т.п.).
+- Жалобы: куда именно пишут (Прокуратура, СК, Росимущество, прямая линия Президента).
+- СМИ: какие каналы/издания упоминают (Собчак, Фонтанка, Москва 24).
+- Провокации: участие беременных, многодетных, участников СВО, планы «завалить двери УК снегом» или «взламывать замки».
+Пример: «В закрытом чате Марьино назревает серьезная акция. Админы договорились на 1 февраля в 13:00 собраться у офиса продаж для записи ролика. Уже нашли многодетную мать и супругу бойца СВО с младенцем для массовки, чтобы видео выглядело максимально жалостливым. Планируют отправить это на Москва 24».
 
-## Конфликты и споры
-Опиши любые конфликтные ситуации, споры между участниками.
+4. ДИФФЕРЕНЦИАЦИЯ АДРЕСАТА
+Всегда указывай, на кого направлен гнев:
+- Застройщик (Самолет): претензии к срокам, ходу стройки, эскроу, конструктивным косякам (фасад, окна, планировка).
+- Управляющая компания (УК): претензии к уборке, снегу, лифтам, охране, квитанциям.
+- Межпользовательские срачи: если жильцы грызутся между собой за парковку, детей или курение на балконах.
+Пример: «Много бытовых споров между жителями из-за парковочных мест, ситуация к застройщику отношения не имеет».
 
-## Важные объявления и новости
-Если были официальные объявления или важная информация - укажи её.
+5. ПРАВИЛА ПО «БЫТОВУХЕ» И «ТИШИНЕ»
+Тишина — если в чате за указанный период нет активности:
+Пишем: «За указанный период не было ни одного сообщения, в чате полная тишина».
 
-## Рекомендации
-Кратко укажи, на что стоит обратить внимание руководству/администрации.
+Бытовые вопросы — если люди обсуждают ремонт, ищут сантехника, выбирают интернет-провайдера:
+Пишем: «Чат остается стабильным, в основном обсуждают мелкие бытовые вопросы, никакой агрессии нет».
+Важно: НЕ расписываем подробно бытовые детали. Это «бытовой шум».
+
+6. ОБЩИЕ ПРАВИЛА ОФОРМЛЕНИЯ
+- Один чат — один абзац. Текст плотный и содержательный.
+- Никаких сокращений и опущений. Если обсуждается важный риск — он расписывается во всех подробностях.
+- Использование контекста: если дольщики ссылаются на другие ЖК, это тоже стоит упомянуть как причину их страхов.
+
+7. СТРУКТУРА ОТЧЕТА
+Название чата выделяется жирным, далее ставится длинное тире и идет основной текст отчета (один человеческий абзац).
+Если информации по чату очень много (особенно по офлайн-рискам), абзац может быть объемным, но он НИКОГДА не должен дробиться на списки.
+
+ВАЖНО: Учитывай абсолютно всё из регламента, каждый пункт предельно важен!"""
+
+SUMMARIZATION_PROMPT = """{system_prompt}
 
 ---
 
-ВАЖНО:
-- Будь максимально подробным и конкретным
-- Указывай реальные имена участников из переписки
-- Приводи цитаты для подтверждения выводов
-- Если негатива нет - так и напиши
-- Пиши на русском языке
+Тебе предоставлена переписка из чата. Составь аналитический отчет по этому чату строго по регламенту выше.
 
 Информация о чате:
 - Название чата: {chat_name}
@@ -65,6 +78,20 @@ SUMMARIZATION_PROMPT = """Ты - аналитик, специализирующ�
 
 Переписка:
 {messages}
+"""
+
+BATCH_SUMMARIZATION_PROMPT = """{system_prompt}
+
+---
+
+Тебе предоставлены переписки из нескольких чатов одного ЖК. Составь единый аналитический отчет по этому ЖК строго по регламенту выше.
+
+Формат: для каждого чата — жирное название, длинное тире, затем связный человеческий абзац.
+
+ЖК: {complex_name}
+Период: {start_date} - {end_date}
+
+{chats_data}
 """
 
 
@@ -101,11 +128,7 @@ class ChatSummarizer:
 
         if not messages:
             return {
-                'summary_text': 'Нет сообщений за указанный период.',
-                'negative_events': [],
-                'negative_actors': [],
-                'topics': [],
-                'overall_sentiment': 'нет данных'
+                'summary_text': f'**{chat_name}** — за указанный период не было ни одного сообщения, в чате полная тишина.',
             }
 
         formatted_messages = self._format_messages(messages)
@@ -117,6 +140,7 @@ class ChatSummarizer:
             formatted_messages = "...[сообщения сокращены]...\n" + formatted_messages[-max_chars:]
 
         prompt = SUMMARIZATION_PROMPT.format(
+            system_prompt=SYSTEM_PROMPT,
             chat_name=chat_name,
             complex_name=complex_name,
             start_date=start_date.strftime('%d.%m.%Y %H:%M'),
@@ -128,80 +152,77 @@ class ChatSummarizer:
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=4096,
+                max_tokens=8192,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
 
             summary_text = response.content[0].text
-
-            # Parse the summary to extract structured data
-            parsed = self._parse_summary(summary_text)
-
-            return {
-                'summary_text': summary_text,
-                'negative_events': parsed.get('negative_events', []),
-                'negative_actors': parsed.get('negative_actors', []),
-                'topics': parsed.get('topics', []),
-                'overall_sentiment': parsed.get('overall_sentiment', 'не определено')
-            }
+            return {'summary_text': summary_text}
 
         except Exception as e:
             return {
                 'summary_text': f'Ошибка при генерации сводки: {str(e)}',
-                'negative_events': [],
-                'negative_actors': [],
-                'topics': [],
-                'overall_sentiment': 'ошибка'
             }
 
-    def _parse_summary(self, summary_text: str) -> dict:
-        """Extract structured data from the summary text"""
-        result = {
-            'negative_events': [],
-            'negative_actors': [],
-            'topics': [],
-            'overall_sentiment': 'не определено'
-        }
+    async def summarize_complex(
+            self,
+            complex_name: str,
+            chats_with_messages: list[dict],
+            start_date: datetime,
+            end_date: datetime
+    ) -> str:
+        """Generate a combined summary for all chats in a complex"""
 
-        lines = summary_text.split('\n')
-        current_section = None
+        # Build combined chats data
+        chats_data_parts = []
+        all_empty = True
 
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+        for chat_info in chats_with_messages:
+            chat_name = chat_info['chat_name']
+            messages = chat_info['messages']
 
-            # Detect sections
-            if '## Общее настроение' in line or '## общее настроение' in line.lower():
-                current_section = 'sentiment'
-            elif '## Негативные события' in line or '## негативные события' in line.lower():
-                current_section = 'negative_events'
-            elif '## Персонажи' in line or '## персонажи' in line.lower():
-                current_section = 'negative_actors'
-            elif '## Основные темы' in line or '## основные темы' in line.lower():
-                current_section = 'topics'
-            elif line.startswith('## '):
-                current_section = 'other'
-            elif current_section == 'sentiment' and not line.startswith('#'):
-                if 'негативн' in line.lower():
-                    result['overall_sentiment'] = 'негативный'
-                elif 'позитивн' in line.lower():
-                    result['overall_sentiment'] = 'позитивный'
-                elif 'нейтральн' in line.lower():
-                    result['overall_sentiment'] = 'нейтральный'
-                elif 'смешан' in line.lower():
-                    result['overall_sentiment'] = 'смешанный'
-            elif current_section == 'negative_events' and line.startswith('- '):
-                result['negative_events'].append(line[2:])
-            elif current_section == 'topics' and line.startswith('- '):
-                result['topics'].append(line[2:])
-            elif current_section == 'negative_actors' and line.startswith('- '):
-                result['negative_actors'].append({'description': line[2:]})
+            if not messages:
+                chats_data_parts.append(
+                    f"--- Чат: {chat_name} ---\nСообщений нет.\n"
+                )
+            else:
+                all_empty = False
+                formatted = self._format_messages(messages)
+                chats_data_parts.append(
+                    f"--- Чат: {chat_name} ({len(messages)} сообщений) ---\n{formatted}\n"
+                )
 
-        return result
+        if all_empty:
+            return f"По ЖК «{complex_name}» за указанный период не было ни одного сообщения во всех чатах, полная тишина."
 
+        chats_data = "\n".join(chats_data_parts)
+
+        # Truncate if too large
+        max_chars = 150000
+        if len(chats_data) > max_chars:
+            chats_data = "...[часть сообщений сокращена]...\n" + chats_data[-max_chars:]
+
+        prompt = BATCH_SUMMARIZATION_PROMPT.format(
+            system_prompt=SYSTEM_PROMPT,
+            complex_name=complex_name,
+            start_date=start_date.strftime('%d.%m.%Y %H:%M'),
+            end_date=end_date.strftime('%d.%m.%Y %H:%M'),
+            chats_data=chats_data
+        )
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=8192,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
 
 # Global instance
 _summarizer: Optional[ChatSummarizer] = None
@@ -217,3 +238,8 @@ def get_summarizer() -> ChatSummarizer:
     if _summarizer is None:
         raise RuntimeError("Summarizer not initialized")
     return _summarizer
+
+
+def get_report_rules() -> str:
+    """Return the report rules text for display in UI"""
+    return SYSTEM_PROMPT
