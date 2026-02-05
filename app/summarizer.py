@@ -1,12 +1,8 @@
+# -*- coding: utf-8 -*-
 import json
+import httpx
 from datetime import datetime
 from typing import Optional
-
-try:
-    from openai import OpenAI
-    HAS_OPENAI = True
-except Exception:
-    HAS_OPENAI = False
 
 
 DEFAULT_REPORT_RULES = """Ты — аналитик-разведчик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов). Ты составляешь аналитические отчеты по строгому регламенту.
@@ -96,38 +92,51 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 
 
 class ChatSummarizer:
-    """Summarizer using OpenRouter API with Gemini 2.5 Flash"""
+    """Summarizer using OpenRouter API with Gemini 2.5 Flash (direct HTTP for proper UTF-8)"""
 
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
     DEFAULT_MODEL = "google/gemini-2.5-flash-preview"
 
     def __init__(self, api_key: str, model: str = None):
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
-        self._client = None
-
-    @property
-    def client(self):
-        if self._client is None:
-            if not HAS_OPENAI:
-                raise RuntimeError("Библиотека openai не установлена. Выполните: pip install openai")
-            self._client = OpenAI(
-                base_url=self.OPENROUTER_BASE_URL,
-                api_key=self.api_key,
-                default_headers={
-                    "HTTP-Referer": "https://ohranka.app",
-                    "X-Title": "AI-агент охранки"
-                }
-            )
-        return self._client
 
     def _format_messages(self, messages: list[dict]) -> str:
         """Format messages for the prompt"""
         formatted = []
         for msg in messages:
             date_str = msg['date'][:16].replace('T', ' ')
-            formatted.append(f"[{date_str}] {msg['sender_name']}: {msg['text']}")
+            sender = msg.get('sender_name', 'Unknown')
+            text = msg.get('text', '')
+            formatted.append(f"[{date_str}] {sender}: {text}")
         return "\n".join(formatted)
+
+    async def _call_api(self, prompt: str) -> str:
+        """Make API call to OpenRouter with proper UTF-8 encoding"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json; charset=utf-8",
+            "HTTP-Referer": "https://ohranka.app",
+            "X-Title": "AI-агент охранки"
+        }
+
+        payload = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                self.OPENROUTER_URL,
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
 
     async def summarize_chat(
             self,
@@ -164,17 +173,8 @@ class ChatSummarizer:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=8192,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-
-            summary_text = response.choices[0].message.content
+            summary_text = await self._call_api(prompt)
             return {'summary_text': summary_text}
-
         except Exception as e:
             return {
                 'summary_text': f'Ошибка при генерации сводки: {str(e)}',
@@ -229,14 +229,7 @@ class ChatSummarizer:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=8192,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            return response.choices[0].message.content
+            return await self._call_api(prompt)
         except Exception as e:
             return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
 
