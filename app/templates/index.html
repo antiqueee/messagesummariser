@@ -684,23 +684,18 @@
                     return;
                 }
                 container.innerHTML = data.accounts.map(acc => `
-                    <div class="card">
-                        <div class="card-header">
-                            <div>
-                                <div class="card-title">${acc.name}</div>
-                                <div class="card-subtitle">${acc.phone}</div>
-                            </div>
-                            <div>
-                                ${acc.is_authorized
-                                    ? '<span class="badge badge-success">Авторизован</span>'
-                                    : '<span class="badge badge-warning">Не авторизован</span>'}
-                            </div>
-                        </div>
-                        <div class="input-group">
+                    <div class="card" style="padding: 10px 15px;">
+                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                            <div style="font-weight: 600; min-width: 180px;">${acc.name}</div>
+                            <div style="color: #666; font-size: 13px; min-width: 130px;">${acc.phone}</div>
+                            <div style="flex: 1;"></div>
                             ${!acc.is_authorized
                                 ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
-                                : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать чаты</button>`}
+                                : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>`}
                             <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
+                            ${acc.is_authorized
+                                ? '<span class="badge badge-success">Авторизован</span>'
+                                : '<span class="badge badge-warning">Не авторизован</span>'}
                         </div>
                     </div>
                 `).join('');
