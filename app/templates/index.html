@@ -685,17 +685,19 @@
                 }
                 container.innerHTML = data.accounts.map(acc => `
                     <div class="card" style="padding: 10px 15px;">
-                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                            <div style="font-weight: 600; min-width: 180px;">${acc.name}</div>
-                            <div style="color: #666; font-size: 13px; min-width: 130px;">${acc.phone}</div>
-                            <div style="flex: 1;"></div>
-                            ${!acc.is_authorized
-                                ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
-                                : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>`}
-                            <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
-                            ${acc.is_authorized
-                                ? '<span class="badge badge-success">Авторизован</span>'
-                                : '<span class="badge badge-warning">Не авторизован</span>'}
+                        <div style="display: grid; grid-template-columns: 250px 150px 1fr auto; align-items: center; gap: 10px;">
+                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
+                            <div style="color: #666; font-size: 13px;">${acc.phone}</div>
+                            <div></div>
+                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                                ${!acc.is_authorized
+                                    ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
+                                    : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>`}
+                                <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
+                                ${acc.is_authorized
+                                    ? '<span class="badge badge-success">Авторизован</span>'
+                                    : '<span class="badge badge-warning">Не авторизован</span>'}
+                            </div>
                         </div>
                     </div>
                 `).join('');
