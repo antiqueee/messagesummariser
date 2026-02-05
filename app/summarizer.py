@@ -9,7 +9,7 @@ except Exception:
     HAS_ANTHROPIC = False
 
 
-SYSTEM_PROMPT = """Ты — аналитик-разведчик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов). Ты составляешь аналитические отчеты по строгому регламенту.
+DEFAULT_REPORT_RULES = """Ты — аналитик-разведчик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов). Ты составляешь аналитические отчеты по строгому регламенту.
 
 РЕГЛАМЕНТ СОСТАВЛЕНИЯ АНАЛИТИЧЕСКИХ ОТЧЕТОВ:
 
@@ -64,7 +64,7 @@ SYSTEM_PROMPT = """Ты — аналитик-разведчик, специал�
 
 ВАЖНО: Учитывай абсолютно всё из регламента, каждый пункт предельно важен!"""
 
-SUMMARIZATION_PROMPT = """{system_prompt}
+SUMMARIZATION_PROMPT = """{rules}
 
 ---
 
@@ -80,7 +80,7 @@ SUMMARIZATION_PROMPT = """{system_prompt}
 {messages}
 """
 
-BATCH_SUMMARIZATION_PROMPT = """{system_prompt}
+BATCH_SUMMARIZATION_PROMPT = """{rules}
 
 ---
 
@@ -122,9 +122,11 @@ class ChatSummarizer:
             chat_name: str,
             complex_name: str,
             start_date: datetime,
-            end_date: datetime
+            end_date: datetime,
+            rules: str = None
     ) -> dict:
         """Generate a summary for a single chat"""
+        rules = rules or DEFAULT_REPORT_RULES
 
         if not messages:
             return {
@@ -140,7 +142,7 @@ class ChatSummarizer:
             formatted_messages = "...[сообщения сокращены]...\n" + formatted_messages[-max_chars:]
 
         prompt = SUMMARIZATION_PROMPT.format(
-            system_prompt=SYSTEM_PROMPT,
+            rules=rules,
             chat_name=chat_name,
             complex_name=complex_name,
             start_date=start_date.strftime('%d.%m.%Y %H:%M'),
@@ -171,9 +173,11 @@ class ChatSummarizer:
             complex_name: str,
             chats_with_messages: list[dict],
             start_date: datetime,
-            end_date: datetime
+            end_date: datetime,
+            rules: str = None
     ) -> str:
         """Generate a combined summary for all chats in a complex"""
+        rules = rules or DEFAULT_REPORT_RULES
 
         # Build combined chats data
         chats_data_parts = []
@@ -205,7 +209,7 @@ class ChatSummarizer:
             chats_data = "...[часть сообщений сокращена]...\n" + chats_data[-max_chars:]
 
         prompt = BATCH_SUMMARIZATION_PROMPT.format(
-            system_prompt=SYSTEM_PROMPT,
+            rules=rules,
             complex_name=complex_name,
             start_date=start_date.strftime('%d.%m.%Y %H:%M'),
             end_date=end_date.strftime('%d.%m.%Y %H:%M'),
@@ -240,6 +244,6 @@ def get_summarizer() -> ChatSummarizer:
     return _summarizer
 
 
-def get_report_rules() -> str:
-    """Return the report rules text for display in UI"""
-    return SYSTEM_PROMPT
+def get_default_report_rules() -> str:
+    """Return the default report rules text"""
+    return DEFAULT_REPORT_RULES

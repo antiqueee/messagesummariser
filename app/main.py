@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from . import database as db
 from .telegram_client import init_telegram_manager, get_telegram_manager
-from .summarizer import init_summarizer, get_summarizer, get_report_rules
+from .summarizer import init_summarizer, get_summarizer, get_default_report_rules
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest
@@ -274,8 +274,7 @@ async def generate_report(data: GenerateReportRequest):
                 'chat_id': chat['id'],
                 'chat_name': chat_name,
                 'original_title': chat['original_title'],
-                'message_count': len(messages),
-                'messages': messages
+                'message_count': len(messages)
             }
 
             complex_data['chats'].append(chat_data)
@@ -286,12 +285,18 @@ async def generate_report(data: GenerateReportRequest):
 
         # If AI is available, generate summary for the whole complex
         if summarizer:
+            # Load custom rules from DB
+            rules = await db.get_setting(REPORT_RULES_KEY)
+            if rules is None:
+                rules = get_default_report_rules()
+
             try:
                 summary_text = await summarizer.summarize_complex(
                     complex_name=complex_name,
                     chats_with_messages=chats_with_messages,
                     start_date=data.start_date,
-                    end_date=data.end_date
+                    end_date=data.end_date,
+                    rules=rules
                 )
                 complex_data['summary'] = summary_text
             except Exception as e:
@@ -304,10 +309,35 @@ async def generate_report(data: GenerateReportRequest):
 
 # ============== Report Rules ==============
 
+REPORT_RULES_KEY = "report_rules"
+
+
 @app.get("/api/report-rules")
 async def get_rules():
-    """Get the report generation rules text"""
-    return {"rules": get_report_rules()}
+    """Get the report generation rules text (from DB or default)"""
+    rules = await db.get_setting(REPORT_RULES_KEY)
+    if rules is None:
+        rules = get_default_report_rules()
+    return {"rules": rules}
+
+
+@app.put("/api/report-rules")
+async def update_rules(request: Request):
+    """Update the report generation rules"""
+    data = await request.json()
+    rules = data.get("rules", "").strip()
+    if not rules:
+        raise HTTPException(status_code=400, detail="Rules cannot be empty")
+    await db.set_setting(REPORT_RULES_KEY, rules)
+    return {"message": "Rules updated"}
+
+
+@app.post("/api/report-rules/reset")
+async def reset_rules():
+    """Reset rules to default"""
+    default_rules = get_default_report_rules()
+    await db.set_setting(REPORT_RULES_KEY, default_rules)
+    return {"rules": default_rules, "message": "Rules reset to default"}
 
 
 # ============== Health Check ==============

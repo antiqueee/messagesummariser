@@ -525,7 +525,13 @@
                     <button class="btn btn-secondary btn-small" onclick="toggleRules()" id="rules-toggle-btn">Показать регламент</button>
                 </div>
 
-                <div id="rules-panel" style="display: none; margin-top: 15px; padding: 20px; background: #fdf2f4; border: 1px solid #d4a0ab; border-radius: 8px; white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: #333; max-height: 500px; overflow-y: auto;"></div>
+                <div id="rules-panel" style="display: none; margin-top: 15px;">
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary btn-small" onclick="saveRules()" id="save-rules-btn">Сохранить регламент</button>
+                        <button class="btn btn-secondary btn-small" onclick="resetRules()">Сбросить к исходному</button>
+                    </div>
+                    <textarea id="rules-textarea" style="width: 100%; height: 400px; padding: 15px; border: 1px solid #d4a0ab; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #333; background: #fdf2f4; resize: vertical; font-family: inherit;"></textarea>
+                </div>
             </div>
 
             <div id="report-loading" class="loading" style="display: none;">
@@ -1015,19 +1021,33 @@
 
             const isAI = report.mode === 'ai';
 
+            // Format date for header
+            const startDate = new Date(report.period_start);
+            const endDate = new Date(report.period_end);
+            const dateStr = startDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+
             let html = `
-                <div class="alert alert-success">
-                    Данные загружены: ${new Date(report.generated_at).toLocaleString()}<br>
-                    Период: ${new Date(report.period_start).toLocaleString()} - ${new Date(report.period_end).toLocaleString()}<br>
-                    Режим: ${isAI ? '<strong>AI-аналитика</strong> (по регламенту)' : '<strong>Сырые сообщения</strong> (Anthropic API не подключен)'}
-                    <button class="btn btn-small copy-btn" onclick="copyReportAsText()" style="margin-left: 15px;">Копировать текст</button>
+                <div class="alert alert-success" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <strong>сводка за ${dateStr}</strong><br>
+                        <span style="font-size: 13px; color: #666;">
+                            ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
+                        </span>
+                    </div>
+                    <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
                 </div>
             `;
 
             for (const complex of report.complexes) {
+                // Calculate total messages for complex
+                const totalMessages = complex.chats.reduce((sum, c) => sum + c.message_count, 0);
+
                 html += `
                     <div class="report-section">
-                        <div class="report-header">${complex.complex_name}</div>
+                        <div class="report-header">
+                            сводка за ${dateStr} по ${complex.complex_name}:
+                            <span style="font-size: 14px; opacity: 0.8; margin-left: 10px;">(${totalMessages} сообщений)</span>
+                        </div>
                 `;
 
                 // If AI summary is available, show it
@@ -1037,52 +1057,28 @@
                             <div class="report-content" style="white-space: pre-wrap; line-height: 1.8;">${escapeHtml(complex.summary)}</div>
                         </div>
                     `;
-                }
+                } else {
+                    // No AI - show structured placeholder for each chat
+                    html += '<div class="report-chat">';
+                    for (const chat of complex.chats) {
+                        const countText = chat.message_count === 0
+                            ? 'нет сообщений'
+                            : `${chat.message_count} сообщений`;
 
-                // Always show raw messages (collapsed if AI mode)
-                for (const chat of complex.chats) {
-                    if (isAI) {
-                        // In AI mode, show collapsible raw messages
-                        const totalMsgs = chat.message_count;
                         html += `
-                            <details style="border-top: 1px solid #e0e0e0;">
-                                <summary style="padding: 12px 20px; cursor: pointer; color: #666; font-size: 13px;">
-                                    ${chat.chat_name} — ${totalMsgs} сообщений (развернуть сырые сообщения)
-                                </summary>
-                                <div class="report-chat" style="padding-top: 0;">
-                        `;
-                    } else {
-                        html += `
-                            <div class="report-chat">
-                                <div class="report-chat-title">
-                                    ${chat.chat_name}
-                                    <span class="badge badge-info">${chat.message_count} сообщений</span>
-                                </div>
+                            <div style="margin-bottom: 12px;">
+                                <strong>${chat.chat_name}</strong> — <span style="color: #666;">${countText}</span>
+                            </div>
                         `;
                     }
-
-                    if (chat.messages && chat.messages.length > 0) {
-                        html += '<div class="messages-container">';
-                        for (const msg of chat.messages) {
-                            const date = new Date(msg.date);
-                            const timeStr = date.toLocaleString('ru-RU', {
-                                day: '2-digit', month: '2-digit',
-                                hour: '2-digit', minute: '2-digit'
-                            });
-                            html += `
-                                <div class="message-item">
-                                    <span class="message-time">${timeStr}</span>
-                                    <span class="message-sender">${escapeHtml(msg.sender_name)}:</span>
-                                    <span class="message-text">${escapeHtml(msg.text)}</span>
-                                </div>
-                            `;
-                        }
-                        html += '</div>';
-                    } else {
-                        html += '<div class="empty-state">Нет сообщений за указанный период</div>';
+                    if (!isAI) {
+                        html += `
+                            <div style="margin-top: 20px; padding: 15px; background: #fff3e0; border-radius: 6px; color: #e65100; font-size: 13px;">
+                                AI-суммаризация не подключена. Добавьте ANTHROPIC_API_KEY в .env файл для автоматической генерации сводок по регламенту.
+                            </div>
+                        `;
                     }
-
-                    html += isAI ? '</div></details>' : '</div>';
+                    html += '</div>';
                 }
 
                 html += '</div>';
@@ -1095,59 +1091,58 @@
             if (!lastReport) return;
             const isAI = lastReport.mode === 'ai';
 
+            // Format date
+            const startDate = new Date(lastReport.period_start);
+            const dateStr = startDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+
             let text = '';
+
             for (const complex of lastReport.complexes) {
-                text += `=== ${complex.complex_name} ===\n\n`;
+                text += `сводка за ${dateStr} по ${complex.complex_name}:\n\n`;
 
                 // If AI summary present, copy that
                 if (isAI && complex.summary) {
                     text += complex.summary + '\n\n';
                 } else {
+                    // Copy structured format
                     for (const chat of complex.chats) {
-                        text += `--- ${chat.chat_name} (${chat.message_count} сообщений) ---\n`;
-
-                        if (chat.messages) {
-                            for (const msg of chat.messages) {
-                                const date = new Date(msg.date);
-                                const timeStr = date.toLocaleString('ru-RU', {
-                                    day: '2-digit', month: '2-digit',
-                                    hour: '2-digit', minute: '2-digit'
-                                });
-                                text += `[${timeStr}] ${msg.sender_name}: ${msg.text}\n`;
-                            }
-                        }
-                        text += '\n';
+                        const countText = chat.message_count === 0
+                            ? 'нет сообщений'
+                            : `${chat.message_count} сообщений`;
+                        text += `${chat.chat_name} — ${countText}\n`;
                     }
+                    text += '\n';
                 }
-                text += '\n';
             }
 
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Текст скопирован в буфер обмена!');
+            navigator.clipboard.writeText(text.trim()).then(() => {
+                alert('Сводка скопирована в буфер обмена!');
             }).catch(() => {
                 const textarea = document.createElement('textarea');
-                textarea.value = text;
+                textarea.value = text.trim();
                 document.body.appendChild(textarea);
                 textarea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
-                alert('Текст скопирован!');
+                alert('Сводка скопирована!');
             });
         }
 
-        // Rules toggle
+        // Rules editing
         let rulesLoaded = false;
         async function toggleRules() {
             const panel = document.getElementById('rules-panel');
             const btn = document.getElementById('rules-toggle-btn');
+            const textarea = document.getElementById('rules-textarea');
+
             if (panel.style.display === 'none') {
                 if (!rulesLoaded) {
                     try {
                         const data = await api('/api/report-rules');
-                        panel.textContent = data.rules;
+                        textarea.value = data.rules;
                         rulesLoaded = true;
                     } catch (e) {
-                        panel.textContent = 'Ошибка загрузки регламента: ' + e.message;
+                        textarea.value = 'Ошибка загрузки регламента: ' + e.message;
                     }
                 }
                 panel.style.display = 'block';
@@ -1155,6 +1150,32 @@
             } else {
                 panel.style.display = 'none';
                 btn.textContent = 'Показать регламент';
+            }
+        }
+
+        async function saveRules() {
+            const textarea = document.getElementById('rules-textarea');
+            const rules = textarea.value.trim();
+            if (!rules) {
+                alert('Регламент не может быть пустым');
+                return;
+            }
+            try {
+                await api('/api/report-rules', 'PUT', { rules });
+                alert('Регламент сохранен!');
+            } catch (e) {
+                alert('Ошибка сохранения: ' + e.message);
+            }
+        }
+
+        async function resetRules() {
+            if (!confirm('Сбросить регламент к исходному? Все ваши изменения будут потеряны.')) return;
+            try {
+                const data = await api('/api/report-rules/reset', 'POST');
+                document.getElementById('rules-textarea').value = data.rules;
+                alert('Регламент сброшен к исходному');
+            } catch (e) {
+                alert('Ошибка сброса: ' + e.message);
             }
         }
 

@@ -48,6 +48,15 @@ async def init_db():
             )
         """)
 
+        # Settings table (for storing editable reglament etc)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
         await db.commit()
 
 
@@ -256,3 +265,22 @@ async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
             result[cid].append(row_dict)
 
         return result
+
+
+# Settings operations
+async def get_setting(key: str) -> Optional[str]:
+    """Get a setting value by key"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def set_setting(key: str, value: str):
+    """Set a setting value (insert or update)"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """, (key, value, datetime.now().isoformat()))
+        await db.commit()
