@@ -117,7 +117,7 @@ class ChatSummarizer:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json; charset=utf-8",
             "HTTP-Referer": "https://ohranka.app",
-            "X-Title": "AI-агент охранки"
+            "X-Title": "AI-agent-ohranka"
         }
 
         payload = {
@@ -128,11 +128,14 @@ class ChatSummarizer:
             ]
         }
 
+        # Explicitly encode as UTF-8 bytes to avoid ascii encoding issues
+        json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 self.OPENROUTER_URL,
                 headers=headers,
-                json=payload
+                content=json_bytes
             )
             response.raise_for_status()
             data = response.json()
