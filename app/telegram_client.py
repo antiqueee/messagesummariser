@@ -211,7 +211,7 @@ class TelegramClientManager:
                     'sender_id': sender_id,
                     'sender_name': sender_name,
                     'text': message.text,
-                    'date': msg_date.isoformat(),
+                    'date': msg_date.isoformat() + 'Z',
                     'reply_to': message.reply_to_msg_id
                 })
 
