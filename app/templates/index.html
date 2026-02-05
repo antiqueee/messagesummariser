@@ -983,10 +983,11 @@
             resultEl.innerHTML = '';
 
             try {
+                // datetime-local value is YYYY-MM-DDTHH:MM, send directly
                 const report = await api('/api/reports/generate', 'POST', {
                     complex_ids: complexIds,
-                    start_date: new Date(startDate).toISOString(),
-                    end_date: new Date(endDate).toISOString()
+                    start_date: startDate + ':00',
+                    end_date: endDate + ':00'
                 });
 
                 loadingEl.style.display = 'none';
