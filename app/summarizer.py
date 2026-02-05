@@ -92,10 +92,10 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 
 
 class ChatSummarizer:
-    """Summarizer using OpenRouter API with Gemini 2.5 Flash (direct HTTP for proper UTF-8)"""
+    """Summarizer using OpenRouter API with Gemini Flash (direct HTTP for proper UTF-8)"""
 
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemini-2.5-flash-preview"
+    DEFAULT_MODEL = "google/gemini-2.0-flash-001"  # Stable Gemini 2.0 Flash
 
     def __init__(self, api_key: str, model: str = None):
         self.api_key = api_key
@@ -137,8 +137,19 @@ class ChatSummarizer:
                 headers=headers,
                 content=json_bytes
             )
-            response.raise_for_status()
-            data = response.json()
+
+            # Get response data for better error messages
+            try:
+                data = response.json()
+            except:
+                data = {"error": response.text}
+
+            if response.status_code != 200:
+                error_msg = data.get("error", {})
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message", str(data))
+                raise Exception(f"OpenRouter API error: {error_msg}")
+
             return data["choices"][0]["message"]["content"]
 
     async def summarize_chat(
