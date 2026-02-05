@@ -27,14 +27,16 @@ async def lifespan(app: FastAPI):
 
     api_id = os.getenv('TELEGRAM_API_ID')
     api_hash = os.getenv('TELEGRAM_API_HASH')
-    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+    openrouter_key = os.getenv('OPENROUTER_API_KEY')
+    ai_model = os.getenv('AI_MODEL')  # Optional: override default model
 
     if api_id and api_hash:
         init_telegram_manager(int(api_id), api_hash)
 
-    if anthropic_key:
+    if openrouter_key:
         try:
-            init_summarizer(anthropic_key)
+            init_summarizer(openrouter_key, ai_model)
+            print(f"Summarizer initialized with model: {ai_model or 'google/gemini-2.5-flash-preview'}")
         except Exception as e:
             print(f"WARNING: Summarizer init skipped ({e}). Summarization will be available later.")
 

@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import Optional
 
 try:
-    import anthropic
-    HAS_ANTHROPIC = True
+    from openai import OpenAI
+    HAS_OPENAI = True
 except Exception:
-    HAS_ANTHROPIC = False
+    HAS_OPENAI = False
 
 
 DEFAULT_REPORT_RULES = """Ты — аналитик-разведчик, специализирующийся на мониторинге настроений в чатах строительных объектов (жилых комплексов). Ты составляешь аналитические отчеты по строгому регламенту.
@@ -96,16 +96,29 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 
 
 class ChatSummarizer:
-    def __init__(self, api_key: str):
+    """Summarizer using OpenRouter API with Gemini 2.5 Flash"""
+
+    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    DEFAULT_MODEL = "google/gemini-2.5-flash-preview"
+
+    def __init__(self, api_key: str, model: str = None):
         self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
         self._client = None
 
     @property
     def client(self):
         if self._client is None:
-            if not HAS_ANTHROPIC:
-                raise RuntimeError("Библиотека anthropic не установлена или несовместима. Выполните: pip install --upgrade anthropic")
-            self._client = anthropic.Anthropic(api_key=self.api_key)
+            if not HAS_OPENAI:
+                raise RuntimeError("Библиотека openai не установлена. Выполните: pip install openai")
+            self._client = OpenAI(
+                base_url=self.OPENROUTER_BASE_URL,
+                api_key=self.api_key,
+                default_headers={
+                    "HTTP-Referer": "https://ohranka.app",
+                    "X-Title": "AI-агент охранки"
+                }
+            )
         return self._client
 
     def _format_messages(self, messages: list[dict]) -> str:
@@ -136,9 +149,8 @@ class ChatSummarizer:
         formatted_messages = self._format_messages(messages)
 
         # Handle large message volumes by chunking if needed
-        max_chars = 150000  # Leave room for prompt and response
+        max_chars = 500000  # Gemini has larger context
         if len(formatted_messages) > max_chars:
-            # Truncate but keep recent messages
             formatted_messages = "...[сообщения сокращены]...\n" + formatted_messages[-max_chars:]
 
         prompt = SUMMARIZATION_PROMPT.format(
@@ -152,15 +164,15 @@ class ChatSummarizer:
         )
 
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+            response = self.client.chat.completions.create(
+                model=self.model,
                 max_tokens=8192,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
 
-            summary_text = response.content[0].text
+            summary_text = response.choices[0].message.content
             return {'summary_text': summary_text}
 
         except Exception as e:
@@ -203,8 +215,8 @@ class ChatSummarizer:
 
         chats_data = "\n".join(chats_data_parts)
 
-        # Truncate if too large
-        max_chars = 150000
+        # Truncate if too large (Gemini has ~1M tokens context)
+        max_chars = 500000
         if len(chats_data) > max_chars:
             chats_data = "...[часть сообщений сокращена]...\n" + chats_data[-max_chars:]
 
@@ -217,24 +229,25 @@ class ChatSummarizer:
         )
 
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+            response = self.client.chat.completions.create(
+                model=self.model,
                 max_tokens=8192,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
-            return response.content[0].text
+            return response.choices[0].message.content
         except Exception as e:
             return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
+
 
 # Global instance
 _summarizer: Optional[ChatSummarizer] = None
 
 
-def init_summarizer(api_key: str):
+def init_summarizer(api_key: str, model: str = None):
     global _summarizer
-    _summarizer = ChatSummarizer(api_key)
+    _summarizer = ChatSummarizer(api_key, model)
     return _summarizer
 
 
