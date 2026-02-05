@@ -214,10 +214,9 @@ async def update_chat(chat_id: int, data: ChatUpdateRequest):
 
 @app.post("/api/reports/generate")
 async def generate_report(data: GenerateReportRequest):
-    """Generate a summary report for selected complexes"""
+    """Generate a report with raw messages for selected complexes"""
     try:
         tm = get_telegram_manager()
-        summarizer = get_summarizer()
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -259,21 +258,12 @@ async def generate_report(data: GenerateReportRequest):
 
             chat_name = chat['custom_name'] or chat['original_title']
 
-            # Generate summary
-            summary = await summarizer.summarize_chat(
-                messages=messages,
-                chat_name=chat_name,
-                complex_name=complex_data['complex_name'],
-                start_date=data.start_date,
-                end_date=data.end_date
-            )
-
             complex_data['chats'].append({
                 'chat_id': chat['id'],
                 'chat_name': chat_name,
                 'original_title': chat['original_title'],
                 'message_count': len(messages),
-                **summary
+                'messages': messages
             })
 
         report['complexes'].append(complex_data)

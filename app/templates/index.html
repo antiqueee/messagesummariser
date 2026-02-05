@@ -384,6 +384,51 @@
             min-width: 200px;
         }
 
+        .message-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .message-item:last-child {
+            border-bottom: none;
+        }
+
+        .message-time {
+            color: #999;
+            font-size: 12px;
+            margin-right: 8px;
+        }
+
+        .message-sender {
+            font-weight: 600;
+            color: #1565c0;
+            margin-right: 6px;
+        }
+
+        .message-text {
+            color: #333;
+        }
+
+        .messages-container {
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            background: #fafafa;
+        }
+
+        .copy-btn {
+            background: #ff9800;
+            color: white;
+            margin-left: 10px;
+        }
+
+        .copy-btn:hover {
+            background: #f57c00;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
@@ -952,7 +997,11 @@
             }
         }
 
+        // Store last report for copy function
+        let lastReport = null;
+
         function renderReport(report) {
+            lastReport = report;
             const container = document.getElementById('report-result');
 
             if (report.complexes.length === 0) {
@@ -962,8 +1011,9 @@
 
             let html = `
                 <div class="alert alert-success">
-                    Сводка сгенерирована: ${new Date(report.generated_at).toLocaleString()}<br>
+                    Данные загружены: ${new Date(report.generated_at).toLocaleString()}<br>
                     Период: ${new Date(report.period_start).toLocaleString()} - ${new Date(report.period_end).toLocaleString()}
+                    <button class="btn btn-small copy-btn" onclick="copyReportAsText()" style="margin-left: 15px;">Копировать текст</button>
                 </div>
             `;
 
@@ -979,11 +1029,31 @@
                             <div class="report-chat-title">
                                 ${chat.chat_name}
                                 <span class="badge badge-info">${chat.message_count} сообщений</span>
-                                <span class="badge ${getSentimentBadge(chat.overall_sentiment)}">${chat.overall_sentiment}</span>
                             </div>
-                            <div class="report-content">${escapeHtml(chat.summary_text)}</div>
-                        </div>
                     `;
+
+                    if (chat.messages && chat.messages.length > 0) {
+                        html += '<div class="messages-container">';
+                        for (const msg of chat.messages) {
+                            const date = new Date(msg.date);
+                            const timeStr = date.toLocaleString('ru-RU', {
+                                day: '2-digit', month: '2-digit',
+                                hour: '2-digit', minute: '2-digit'
+                            });
+                            html += `
+                                <div class="message-item">
+                                    <span class="message-time">${timeStr}</span>
+                                    <span class="message-sender">${escapeHtml(msg.sender_name)}:</span>
+                                    <span class="message-text">${escapeHtml(msg.text)}</span>
+                                </div>
+                            `;
+                        }
+                        html += '</div>';
+                    } else {
+                        html += '<div class="empty-state">Нет сообщений за указанный период</div>';
+                    }
+
+                    html += '</div>';
                 }
 
                 html += '</div>';
@@ -992,16 +1062,49 @@
             container.innerHTML = html;
         }
 
-        function getSentimentBadge(sentiment) {
-            if (sentiment.includes('негатив')) return 'badge-warning';
-            if (sentiment.includes('позитив')) return 'badge-success';
-            return 'badge-info';
+        function copyReportAsText() {
+            if (!lastReport) return;
+
+            let text = '';
+            for (const complex of lastReport.complexes) {
+                text += `=== ${complex.complex_name} ===\n\n`;
+
+                for (const chat of complex.chats) {
+                    text += `--- ${chat.chat_name} (${chat.message_count} сообщений) ---\n`;
+
+                    if (chat.messages) {
+                        for (const msg of chat.messages) {
+                            const date = new Date(msg.date);
+                            const timeStr = date.toLocaleString('ru-RU', {
+                                day: '2-digit', month: '2-digit',
+                                hour: '2-digit', minute: '2-digit'
+                            });
+                            text += `[${timeStr}] ${msg.sender_name}: ${msg.text}\n`;
+                        }
+                    }
+                    text += '\n';
+                }
+                text += '\n';
+            }
+
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Текст скопирован в буфер обмена!');
+            }).catch(() => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Текст скопирован!');
+            });
         }
 
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
-            return div.innerHTML.replace(/\n/g, '<br>');
+            return div.innerHTML;
         }
 
         // Initial load
