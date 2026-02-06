@@ -96,7 +96,7 @@ class ChatSummarizer:
     """Summarizer using OpenRouter API with Gemini Flash (direct HTTP for proper UTF-8)"""
 
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemini-2.0-flash-001"  # Stable Gemini 2.0 Flash
+    DEFAULT_MODEL = "google/gemini-3-flash-preview"  # Gemini 3 Flash - faster and smarter
 
     def __init__(self, api_key: str, model: str = None):
         self.api_key = api_key
