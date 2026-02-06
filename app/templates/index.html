@@ -29,6 +29,9 @@
             padding: 20px;
             margin-bottom: 20px;
             border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         header h1 {
@@ -39,6 +42,12 @@
         header p {
             opacity: 0.9;
             font-size: 14px;
+        }
+
+        header .author {
+            font-style: italic;
+            opacity: 0.8;
+            font-size: 13px;
         }
 
         .tabs {
@@ -94,7 +103,7 @@
         }
 
         .btn {
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
@@ -135,8 +144,8 @@
         }
 
         .btn-small {
-            padding: 6px 12px;
-            font-size: 12px;
+            padding: 8px 16px;
+            font-size: 13px;
         }
 
         .input-group {
@@ -447,8 +456,11 @@
 <body>
     <div class="container">
         <header>
-            <h1>AI-агент охранки</h1>
-            <p>Мониторинг и суммаризация чатов строительных объектов</p>
+            <div>
+                <h1>AI-агент охранки</h1>
+                <p>Мониторинг и суммаризация чатов строительных объектов</p>
+            </div>
+            <span class="author">by Антон Антоненко</span>
         </header>
 
         <div class="tabs">
@@ -522,7 +534,7 @@
 
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <button class="btn btn-success" onclick="generateReport()">Сформировать сводку</button>
-                    <button class="btn btn-secondary btn-small" onclick="toggleRules()" id="rules-toggle-btn">Показать регламент</button>
+                    <button class="btn btn-secondary" onclick="toggleRules()" id="rules-toggle-btn">Показать регламент</button>
                 </div>
 
                 <div id="rules-panel" style="display: none; margin-top: 15px;">

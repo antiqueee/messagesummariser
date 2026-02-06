@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -10,6 +11,35 @@ from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 
 from . import database as db
+
+
+def extract_building_number(chat_name: str) -> tuple[int, str]:
+    """Extract building number for sorting. Returns (sort_key, name).
+    Building chats (корпус X, секция X) get priority, general chats go last."""
+    name_lower = chat_name.lower()
+
+    # Look for patterns like "корпус 17", "корп. 5", "к.12", "секция 3"
+    patterns = [
+        r'корпус\s*(\d+)',
+        r'корп\.?\s*(\d+)',
+        r'к\.?\s*(\d+)',
+        r'секция\s*(\d+)',
+        r'секц\.?\s*(\d+)',
+        r'^(\d+)\s*корп',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, name_lower)
+        if match:
+            return (0, int(match.group(1)), chat_name)  # Buildings first, sorted by number
+
+    # General/common chats go last
+    return (1, 0, chat_name)  # Non-building chats last, sorted alphabetically
+
+
+def sort_chats_by_building(chats: list[dict]) -> list[dict]:
+    """Sort chats: buildings first (by number), then general chats"""
+    return sorted(chats, key=lambda c: extract_building_number(c.get('chat_name', c.get('custom_name', c.get('original_title', '')))))
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules
 from .models import (
@@ -261,7 +291,10 @@ async def generate_report(data: GenerateReportRequest):
 
         chats_with_messages = []
 
-        for chat in chats:
+        # Sort chats: buildings first (by number), then general chats
+        sorted_chats = sort_chats_by_building(chats)
+
+        for chat in sorted_chats:
             # Get messages from Telegram
             messages = await tm.get_messages(
                 account_id=chat['account_id'],

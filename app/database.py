@@ -27,9 +27,16 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS complexes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 999,
                 created_at TEXT NOT NULL
             )
         """)
+
+        # Add sort_order column if it doesn't exist (for existing DBs)
+        try:
+            await db.execute("ALTER TABLE complexes ADD COLUMN sort_order INTEGER DEFAULT 999")
+        except:
+            pass  # Column already exists
 
         # Chats table
         await db.execute("""
@@ -117,7 +124,7 @@ async def create_complex(name: str) -> int:
 async def get_complexes() -> list[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM complexes ORDER BY name")
+        cursor = await db.execute("SELECT * FROM complexes ORDER BY sort_order, name")
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -130,9 +137,12 @@ async def get_complex(complex_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-async def update_complex(complex_id: int, name: str):
+async def update_complex(complex_id: int, name: str, sort_order: int = None):
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("UPDATE complexes SET name = ? WHERE id = ?", (name, complex_id))
+        if sort_order is not None:
+            await db.execute("UPDATE complexes SET name = ?, sort_order = ? WHERE id = ?", (name, sort_order, complex_id))
+        else:
+            await db.execute("UPDATE complexes SET name = ? WHERE id = ?", (name, complex_id))
         await db.commit()
 
 
@@ -243,16 +253,17 @@ async def update_chat(chat_id: int, custom_name: Optional[str] = None,
 
 
 async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
-    """Get all monitored chats grouped by complex_id"""
+    """Get all monitored chats grouped by complex_id, ordered by complex sort_order"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
-            SELECT c.*, cx.name as complex_name, a.name as account_name, a.phone as account_phone
+            SELECT c.*, cx.name as complex_name, cx.sort_order as complex_sort_order,
+                   a.name as account_name, a.phone as account_phone
             FROM chats c
             JOIN complexes cx ON c.complex_id = cx.id
             JOIN accounts a ON c.account_id = a.id
             WHERE c.is_monitored = 1 AND c.complex_id IS NOT NULL
-            ORDER BY cx.name, c.original_title
+            ORDER BY cx.sort_order, cx.name, c.original_title
         """)
         rows = await cursor.fetchall()
 
