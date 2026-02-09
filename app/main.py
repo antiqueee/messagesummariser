@@ -41,7 +41,7 @@ def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     """Sort chats: buildings first (by number), then general chats"""
     return sorted(chats, key=lambda c: extract_building_number(c.get('chat_name', c.get('custom_name', c.get('original_title', '')))))
 from .telegram_client import init_telegram_manager, get_telegram_manager
-from .summarizer import init_summarizer, get_summarizer, get_default_report_rules
+from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
@@ -416,11 +416,15 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             'messages': messages
         })
 
+    # Load custom rules from DB
+    rules = await db.get_setting(NEGATIVISTS_RULES_KEY)
+
     # Analyze with AI
     result = await summarizer.analyze_negativists(
         chats_with_messages=chats_with_messages,
         start_date=data.start_date,
-        end_date=data.end_date
+        end_date=data.end_date,
+        rules=rules
     )
 
     return {
@@ -429,6 +433,39 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
         'negativists': result.get('negativists', []),
         'analysis_notes': result.get('analysis_notes')
     }
+
+
+# ============== Negativists Rules ==============
+
+NEGATIVISTS_RULES_KEY = "negativists_rules"
+
+
+@app.get("/api/negativists-rules")
+async def get_negativists_rules():
+    """Get the negativists analysis rules text (from DB or default)"""
+    rules = await db.get_setting(NEGATIVISTS_RULES_KEY)
+    if rules is None:
+        rules = get_default_negativists_rules()
+    return {"rules": rules}
+
+
+@app.put("/api/negativists-rules")
+async def update_negativists_rules(request: Request):
+    """Update the negativists analysis rules"""
+    data = await request.json()
+    rules = data.get("rules", "").strip()
+    if not rules:
+        raise HTTPException(status_code=400, detail="Rules cannot be empty")
+    await db.set_setting(NEGATIVISTS_RULES_KEY, rules)
+    return {"message": "Rules updated"}
+
+
+@app.post("/api/negativists-rules/reset")
+async def reset_negativists_rules():
+    """Reset negativists rules to default"""
+    default_rules = get_default_negativists_rules()
+    await db.set_setting(NEGATIVISTS_RULES_KEY, default_rules)
+    return {"rules": default_rules, "message": "Rules reset to default"}
 
 
 # ============== Health Check ==============

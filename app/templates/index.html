@@ -560,13 +560,13 @@
             <div class="section">
                 <h2 class="section-title">Выявление негативщиков</h2>
                 <p style="color: #666; margin-bottom: 20px; font-size: 14px;">
-                    Анализ чатов для выявления пользователей, призывающих к активным действиям: жалобы, митинги, обращения в СМИ и госорганы.
-                    Обычный бытовой негатив (недовольство плиткой и т.п.) не учитывается.
+                    Анализ чатов для выявления пользователей, призывающих к активным действиям: жалобы в госорганы, обращения в СМИ, митинги, критика УК.
+                    Также отмечаются пользователи, связанные с СВО и многодетные семьи.
                 </p>
 
                 <div class="form-group">
                     <label>Выберите чаты для анализа:</label>
-                    <div id="negativists-chats" class="chat-list" style="max-height: 300px; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px;"></div>
+                    <div id="negativists-chats" class="chat-list" style="max-height: 300px; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; overflow-y: auto;"></div>
                 </div>
 
                 <div class="date-inputs">
@@ -582,6 +582,15 @@
 
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <button class="btn btn-success" onclick="generateNegativists()">Найти негативщиков</button>
+                    <button class="btn btn-secondary" onclick="toggleNegRules()" id="neg-rules-toggle-btn">Показать инструкции AI</button>
+                </div>
+
+                <div id="neg-rules-panel" style="display: none; margin-top: 15px;">
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary btn-small" onclick="saveNegRules()">Сохранить инструкции</button>
+                        <button class="btn btn-secondary btn-small" onclick="resetNegRules()">Сбросить к исходному</button>
+                    </div>
+                    <textarea id="neg-rules-textarea" style="width: 100%; height: 300px; padding: 15px; border: 1px solid #d4a0ab; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #333; background: #fdf2f4; resize: vertical; font-family: inherit;"></textarea>
                 </div>
             </div>
 
@@ -1247,16 +1256,19 @@
                     container.innerHTML = '<div class="empty-state">Нет чатов на мониторинге. Добавьте чаты во вкладке "Чаты".</div>';
                     return;
                 }
-                container.innerHTML = data.chats.map(chat => `
-                    <label class="chat-item" style="cursor: pointer;">
-                        <input type="checkbox" class="negativists-chat-checkbox chat-checkbox" value="${chat.id}"
-                               data-telegram-id="${chat.telegram_id}" data-account-id="${chat.account_id}">
-                        <div class="chat-info">
-                            <div class="chat-title">${chat.custom_name || chat.original_title}</div>
-                            <div class="chat-meta">
-                                ${chat.complex_name ? `<span class="badge badge-info">${chat.complex_name}</span>` : ''}
-                            </div>
-                        </div>
+                // Sort by complex name (ЖК)
+                const sortedChats = data.chats.sort((a, b) => {
+                    const nameA = a.complex_name || 'яяя';
+                    const nameB = b.complex_name || 'яяя';
+                    return nameA.localeCompare(nameB, 'ru');
+                });
+                container.innerHTML = sortedChats.map(chat => `
+                    <label style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 6px; cursor: pointer; background: white;">
+                        <input type="checkbox" class="negativists-chat-checkbox" value="${chat.id}"
+                               data-telegram-id="${chat.telegram_id}" data-account-id="${chat.account_id}"
+                               style="width: 18px; height: 18px; flex-shrink: 0;">
+                        <span style="flex: 1; font-weight: 500;">${chat.custom_name || chat.original_title}</span>
+                        ${chat.complex_name ? `<span class="badge badge-info" style="flex-shrink: 0;">${chat.complex_name}</span>` : ''}
                     </label>
                 `).join('');
             } catch (e) {
@@ -1268,6 +1280,57 @@
             const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
             document.getElementById('negativists-end-date').value = formatDateForInput(now);
             document.getElementById('negativists-start-date').value = formatDateForInput(weekAgo);
+        }
+
+        // Negativists rules editing
+        let negRulesLoaded = false;
+        async function toggleNegRules() {
+            const panel = document.getElementById('neg-rules-panel');
+            const btn = document.getElementById('neg-rules-toggle-btn');
+            const textarea = document.getElementById('neg-rules-textarea');
+
+            if (panel.style.display === 'none') {
+                if (!negRulesLoaded) {
+                    try {
+                        const data = await api('/api/negativists-rules');
+                        textarea.value = data.rules;
+                        negRulesLoaded = true;
+                    } catch (e) {
+                        textarea.value = 'Ошибка загрузки инструкций: ' + e.message;
+                    }
+                }
+                panel.style.display = 'block';
+                btn.textContent = 'Скрыть инструкции AI';
+            } else {
+                panel.style.display = 'none';
+                btn.textContent = 'Показать инструкции AI';
+            }
+        }
+
+        async function saveNegRules() {
+            const textarea = document.getElementById('neg-rules-textarea');
+            const rules = textarea.value.trim();
+            if (!rules) {
+                alert('Инструкции не могут быть пустыми');
+                return;
+            }
+            try {
+                await api('/api/negativists-rules', 'PUT', { rules });
+                alert('Инструкции сохранены!');
+            } catch (e) {
+                alert('Ошибка сохранения: ' + e.message);
+            }
+        }
+
+        async function resetNegRules() {
+            if (!confirm('Сбросить инструкции к исходному? Все ваши изменения будут потеряны.')) return;
+            try {
+                const data = await api('/api/negativists-rules/reset', 'POST');
+                document.getElementById('neg-rules-textarea').value = data.rules;
+                alert('Инструкции сброшены к исходному');
+            } catch (e) {
+                alert('Ошибка сброса: ' + e.message);
+            }
         }
 
         let lastNegativists = null;
@@ -1354,10 +1417,19 @@
             result.negativists.forEach((person, idx) => {
                 const statusClass = person.threat_level === 'high' ? 'color: #c62828;' :
                                    person.threat_level === 'medium' ? 'color: #ef6c00;' : 'color: #333;';
+                // Generate tags badges
+                let tagsBadges = '';
+                if (person.tags && person.tags.length > 0) {
+                    tagsBadges = person.tags.map(tag => {
+                        if (tag === 'СВО') return '<span style="background: #1565c0; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">СВО</span>';
+                        if (tag === 'МНОГОДЕТНЫЕ') return '<span style="background: #7b1fa2; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">МНОГОДЕТНЫЕ</span>';
+                        return `<span style="background: #666; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">${escapeHtml(tag)}</span>`;
+                    }).join('');
+                }
                 html += `
                     <tr style="border-bottom: 1px solid #eee;">
                         <td style="padding: 12px; ${statusClass}">${idx + 1}</td>
-                        <td style="padding: 12px; font-weight: 500;">${escapeHtml(person.name || 'Неизвестно')}</td>
+                        <td style="padding: 12px; font-weight: 500;">${escapeHtml(person.name || 'Неизвестно')}${tagsBadges}</td>
                         <td style="padding: 12px; color: #666;">${person.username ? '@' + escapeHtml(person.username) : '—'}</td>
                         <td style="padding: 12px; ${statusClass}">${escapeHtml(person.status)}</td>
                     </tr>
@@ -1391,6 +1463,9 @@
 
             lastNegativists.negativists.forEach((person, idx) => {
                 text += `${idx + 1}. ${person.name || 'Неизвестно'}`;
+                if (person.tags && person.tags.length > 0) {
+                    text += ` [${person.tags.join(', ')}]`;
+                }
                 if (person.username) text += ` (@${person.username})`;
                 text += `\n   Статус: ${person.status}\n\n`;
             });
