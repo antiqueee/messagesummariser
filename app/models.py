@@ -101,3 +101,9 @@ class GenerateReportRequest(BaseModel):
     complex_ids: list[int]
     start_date: datetime
     end_date: datetime
+
+
+class AnalyzeNegativistsRequest(BaseModel):
+    chat_ids: list[int]
+    start_date: datetime
+    end_date: datetime

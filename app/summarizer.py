@@ -93,6 +93,55 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 {chats_data}
 """
 
+NEGATIVISTS_PROMPT = """Ты — аналитик-разведчик, специализирующийся на выявлении потенциальных негативщиков и провокаторов в чатах жилых комплексов.
+
+ТВОЯ ЗАДАЧА:
+Проанализировать переписку и выявить пользователей, которые представляют реальную угрозу репутации застройщика и могут инициировать организованные действия.
+
+КРИТЕРИИ ОТБОРА (СТРОГИЕ):
+Включай в список ТОЛЬКО тех, кто:
+1. Призывает к коллективным жалобам в госорганы (прокуратура, Роспотребнадзор, жилинспекция и т.д.)
+2. Призывает к обращениям в СМИ, блогерам, телеканалам
+3. Организует или призывает к митингам, пикетам, акциям протеста
+4. Активно агитирует других жильцов против застройщика с конкретными призывами к действию
+5. Угрожает судебными исками с призывом присоединиться
+6. Собирает подписи, создает петиции, организует группы недовольных
+
+НЕ ВКЛЮЧАЙ в список:
+- Обычных недовольных (жалобы на плитку, отделку, сроки БЕЗ призывов к действию)
+- Тех, кто просто ругает застройщика эмоционально без конкретных призывов
+- Тех, кто задает вопросы или выражает беспокойство
+- Единичные негативные сообщения без системной активности
+
+ФОРМАТ ОТВЕТА:
+Верни JSON-массив в следующем формате (и ТОЛЬКО его, без дополнительного текста):
+{{
+    "negativists": [
+        {{
+            "name": "Имя Фамилия или ник",
+            "username": "telegram_username без @, или null если нет",
+            "threat_level": "high/medium/low",
+            "status": "Краткое описание: к чему призывает, что организует (1-2 предложения)"
+        }}
+    ],
+    "analysis_notes": "Общие заметки по анализу (опционально, или null)"
+}}
+
+Уровни угрозы:
+- high: активно организует действия, собирает людей, уже начал что-то делать
+- medium: регулярно призывает к действиям, но пока без конкретной организации
+- low: единичные призывы к действиям, но заметная активность
+
+Если негативщиков не выявлено, верни: {{"negativists": [], "analysis_notes": null}}
+
+---
+
+ЧАТЫ ДЛЯ АНАЛИЗА:
+Период: {start_date} - {end_date}
+
+{chats_data}
+"""
+
 
 class ChatSummarizer:
     """Summarizer using OpenRouter API with Gemini Flash (direct HTTP for proper UTF-8)"""
@@ -249,6 +298,75 @@ class ChatSummarizer:
             return await self._call_api(prompt)
         except Exception as e:
             return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
+
+    async def analyze_negativists(
+            self,
+            chats_with_messages: list[dict],
+            start_date: datetime,
+            end_date: datetime
+    ) -> dict:
+        """Analyze chats to identify negativists and provocateurs"""
+        # Build combined chats data
+        chats_data_parts = []
+        total_messages = 0
+
+        for chat_info in chats_with_messages:
+            chat_name = chat_info['chat_name']
+            messages = chat_info['messages']
+
+            if not messages:
+                continue
+
+            total_messages += len(messages)
+            formatted = self._format_messages(messages)
+            chats_data_parts.append(
+                f"--- Чат: {chat_name} ({len(messages)} сообщений) ---\n{formatted}\n"
+            )
+
+        if total_messages == 0:
+            return {
+                "negativists": [],
+                "analysis_notes": "За указанный период не было сообщений в выбранных чатах."
+            }
+
+        chats_data = "\n".join(chats_data_parts)
+
+        # Truncate if too large
+        max_chars = 500000
+        if len(chats_data) > max_chars:
+            chats_data = "...[часть сообщений сокращена]...\n" + chats_data[-max_chars:]
+
+        prompt = NEGATIVISTS_PROMPT.format(
+            start_date=start_date.strftime('%d.%m.%Y %H:%M'),
+            end_date=end_date.strftime('%d.%m.%Y %H:%M'),
+            chats_data=chats_data
+        )
+
+        try:
+            response = await self._call_api(prompt)
+            # Parse JSON response
+            # Clean up response - remove markdown code blocks if present
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            response = response.strip()
+
+            result = json.loads(response)
+            return result
+        except json.JSONDecodeError as e:
+            return {
+                "negativists": [],
+                "analysis_notes": f"Ошибка парсинга ответа AI: {str(e)}. Ответ: {response[:500]}"
+            }
+        except Exception as e:
+            return {
+                "negativists": [],
+                "analysis_notes": f"Ошибка при анализе: {str(e)}"
+            }
 
 
 # Global instance

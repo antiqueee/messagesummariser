@@ -44,7 +44,8 @@ from .telegram_client import init_telegram_manager, get_telegram_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
-    ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest
+    ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
+    AnalyzeNegativistsRequest
 )
 
 load_dotenv()
@@ -373,6 +374,61 @@ async def reset_rules():
     default_rules = get_default_report_rules()
     await db.set_setting(REPORT_RULES_KEY, default_rules)
     return {"rules": default_rules, "message": "Rules reset to default"}
+
+
+# ============== Negativists Analysis ==============
+
+@app.post("/api/negativists/analyze")
+async def analyze_negativists(data: AnalyzeNegativistsRequest):
+    """Analyze chats to identify negativists and provocateurs"""
+    try:
+        summarizer = get_summarizer()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=400,
+            detail="AI-анализ не настроен. Добавьте OPENROUTER_API_KEY в .env файл."
+        )
+
+    try:
+        tm = get_telegram_manager()
+    except RuntimeError:
+        raise HTTPException(status_code=400, detail="Telegram не настроен")
+
+    # Get selected chats
+    chats_with_messages = []
+
+    for chat_id in data.chat_ids:
+        chat = await db.get_chat(chat_id)
+        if not chat:
+            continue
+
+        # Get messages from Telegram
+        messages = await tm.get_messages(
+            account_id=chat['account_id'],
+            chat_telegram_id=chat['telegram_id'],
+            start_date=data.start_date,
+            end_date=data.end_date
+        )
+
+        chat_name = chat['custom_name'] or chat['original_title']
+        chats_with_messages.append({
+            'chat_name': chat_name,
+            'messages': messages
+        })
+
+    # Analyze with AI
+    result = await summarizer.analyze_negativists(
+        chats_with_messages=chats_with_messages,
+        start_date=data.start_date,
+        end_date=data.end_date
+    )
+
+    return {
+        'period_start': data.start_date.isoformat(),
+        'period_end': data.end_date.isoformat(),
+        'negativists': result.get('negativists', []),
+        'analysis_notes': result.get('analysis_notes')
+    }
 
 
 # ============== Health Check ==============

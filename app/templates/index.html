@@ -468,6 +468,7 @@
             <button class="tab-btn" data-tab="complexes">ЖК (Объекты)</button>
             <button class="tab-btn" data-tab="chats">Чаты</button>
             <button class="tab-btn" data-tab="reports">Сводка</button>
+            <button class="tab-btn" data-tab="negativists">Негативщики</button>
         </div>
 
         <!-- Accounts Panel -->
@@ -552,6 +553,44 @@
             </div>
 
             <div id="report-result"></div>
+        </div>
+
+        <!-- Negativists Panel -->
+        <div id="negativists-panel" class="panel">
+            <div class="section">
+                <h2 class="section-title">Выявление негативщиков</h2>
+                <p style="color: #666; margin-bottom: 20px; font-size: 14px;">
+                    Анализ чатов для выявления пользователей, призывающих к активным действиям: жалобы, митинги, обращения в СМИ и госорганы.
+                    Обычный бытовой негатив (недовольство плиткой и т.п.) не учитывается.
+                </p>
+
+                <div class="form-group">
+                    <label>Выберите чаты для анализа:</label>
+                    <div id="negativists-chats" class="chat-list" style="max-height: 300px; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px;"></div>
+                </div>
+
+                <div class="date-inputs">
+                    <div class="form-group">
+                        <label>Начало периода:</label>
+                        <input type="datetime-local" id="negativists-start-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Конец периода:</label>
+                        <input type="datetime-local" id="negativists-end-date">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button class="btn btn-success" onclick="generateNegativists()">Найти негативщиков</button>
+                </div>
+            </div>
+
+            <div id="negativists-loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Анализ сообщений... Это может занять несколько минут.</p>
+            </div>
+
+            <div id="negativists-result"></div>
         </div>
     </div>
 
@@ -659,6 +698,7 @@
                     loadChats();
                 }
                 if (btn.dataset.tab === 'reports') loadReportComplexes();
+                if (btn.dataset.tab === 'negativists') loadNegativistsChats();
             });
         });
 
@@ -1195,6 +1235,181 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // Negativists
+        async function loadNegativistsChats() {
+            const container = document.getElementById('negativists-chats');
+            try {
+                // Load only monitored chats
+                const data = await api('/api/chats?monitored_only=true');
+                if (data.chats.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет чатов на мониторинге. Добавьте чаты во вкладке "Чаты".</div>';
+                    return;
+                }
+                container.innerHTML = data.chats.map(chat => `
+                    <label class="chat-item" style="cursor: pointer;">
+                        <input type="checkbox" class="negativists-chat-checkbox chat-checkbox" value="${chat.id}"
+                               data-telegram-id="${chat.telegram_id}" data-account-id="${chat.account_id}">
+                        <div class="chat-info">
+                            <div class="chat-title">${chat.custom_name || chat.original_title}</div>
+                            <div class="chat-meta">
+                                ${chat.complex_name ? `<span class="badge badge-info">${chat.complex_name}</span>` : ''}
+                            </div>
+                        </div>
+                    </label>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+
+            // Set default dates (last 7 days)
+            const now = new Date();
+            const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            document.getElementById('negativists-end-date').value = formatDateForInput(now);
+            document.getElementById('negativists-start-date').value = formatDateForInput(weekAgo);
+        }
+
+        let lastNegativists = null;
+
+        async function generateNegativists() {
+            const checkboxes = document.querySelectorAll('.negativists-chat-checkbox:checked');
+            if (checkboxes.length === 0) {
+                alert('Выберите хотя бы один чат');
+                return;
+            }
+
+            const chatIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            const startDate = document.getElementById('negativists-start-date').value;
+            const endDate = document.getElementById('negativists-end-date').value;
+
+            if (!startDate || !endDate) {
+                alert('Выберите период');
+                return;
+            }
+
+            const loadingEl = document.getElementById('negativists-loading');
+            const resultEl = document.getElementById('negativists-result');
+
+            loadingEl.style.display = 'block';
+            resultEl.innerHTML = '';
+
+            try {
+                const result = await api('/api/negativists/analyze', 'POST', {
+                    chat_ids: chatIds,
+                    start_date: startDate + ':00',
+                    end_date: endDate + ':00'
+                });
+
+                loadingEl.style.display = 'none';
+                lastNegativists = result;
+                renderNegativists(result);
+            } catch (e) {
+                loadingEl.style.display = 'none';
+                resultEl.innerHTML = `<div class="alert alert-error">Ошибка: ${e.message}</div>`;
+            }
+        }
+
+        function renderNegativists(result) {
+            const container = document.getElementById('negativists-result');
+
+            if (!result.negativists || result.negativists.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-success">
+                        <strong>Негативщиков не выявлено</strong><br>
+                        <span style="font-size: 13px;">За указанный период не обнаружено пользователей, призывающих к активным действиям.</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const startDate = new Date(result.period_start);
+            const endDate = new Date(result.period_end);
+
+            let html = `
+                <div class="alert alert-success" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <strong>Найдено негативщиков: ${result.negativists.length}</strong><br>
+                        <span style="font-size: 13px; color: #666;">
+                            Период: ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
+                        </span>
+                    </div>
+                    <button class="btn btn-small copy-btn" onclick="copyNegativists()">Копировать список</button>
+                </div>
+                <div class="report-section">
+                    <div class="report-header">Список негативщиков</div>
+                    <div style="padding: 15px;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: #f5f5f5;">
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">№</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Имя / Ник</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Username</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Статус / Описание</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            result.negativists.forEach((person, idx) => {
+                const statusClass = person.threat_level === 'high' ? 'color: #c62828;' :
+                                   person.threat_level === 'medium' ? 'color: #ef6c00;' : 'color: #333;';
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 12px; ${statusClass}">${idx + 1}</td>
+                        <td style="padding: 12px; font-weight: 500;">${escapeHtml(person.name || 'Неизвестно')}</td>
+                        <td style="padding: 12px; color: #666;">${person.username ? '@' + escapeHtml(person.username) : '—'}</td>
+                        <td style="padding: 12px; ${statusClass}">${escapeHtml(person.status)}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+
+            if (result.analysis_notes) {
+                html += `
+                    <div style="margin-top: 15px; padding: 15px; background: #fafafa; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <strong>Примечания к анализу:</strong>
+                        <p style="margin-top: 10px; white-space: pre-wrap; line-height: 1.6;">${escapeHtml(result.analysis_notes)}</p>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function copyNegativists() {
+            if (!lastNegativists || !lastNegativists.negativists) return;
+
+            let text = 'СПИСОК НЕГАТИВЩИКОВ\n';
+            text += '==================\n\n';
+
+            lastNegativists.negativists.forEach((person, idx) => {
+                text += `${idx + 1}. ${person.name || 'Неизвестно'}`;
+                if (person.username) text += ` (@${person.username})`;
+                text += `\n   Статус: ${person.status}\n\n`;
+            });
+
+            if (lastNegativists.analysis_notes) {
+                text += '\nПримечания:\n' + lastNegativists.analysis_notes;
+            }
+
+            navigator.clipboard.writeText(text.trim()).then(() => {
+                alert('Список скопирован в буфер обмена!');
+            }).catch(() => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text.trim();
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Список скопирован!');
+            });
         }
 
         // Initial load
