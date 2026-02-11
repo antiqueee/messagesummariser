@@ -1183,10 +1183,11 @@
 
             try {
                 // Debug alert - remove after fixing
+                const rawStart = document.getElementById('report-start-date').value;
+                const rawEnd = document.getElementById('report-end-date').value;
                 const sendStart = startDate + ':00';
                 const sendEnd = endDate + ':00';
-                console.log('Sending:', sendStart, sendEnd);
-                // alert('Отправляем даты:\n' + sendStart + '\n' + sendEnd);
+                alert('Raw: ' + rawStart + ' | ' + rawEnd + '\nParsed: ' + sendStart + ' | ' + sendEnd);
 
                 const report = await api('/api/reports/generate', 'POST', {
                     complex_ids: complexIds,
