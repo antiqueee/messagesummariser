@@ -275,16 +275,22 @@ class ChatSummarizer:
         for chat_info in chats_with_messages:
             chat_name = chat_info['chat_name']
             messages = chat_info['messages']
+            content_filter = chat_info.get('content_filter', '')
+
+            # Build filter instruction if specified
+            filter_note = ""
+            if content_filter:
+                filter_note = f"\n[ФИЛЬТР: Анализируй только контент, связанный с: {content_filter}. Остальные сообщения игнорируй.]\n"
 
             if not messages:
                 chats_data_parts.append(
-                    f"--- Чат: {chat_name} ---\nСообщений нет.\n"
+                    f"--- Чат: {chat_name} ---{filter_note}Сообщений нет.\n"
                 )
             else:
                 all_empty = False
                 formatted = self._format_messages(messages)
                 chats_data_parts.append(
-                    f"--- Чат: {chat_name} ({len(messages)} сообщений) ---\n{formatted}\n"
+                    f"--- Чат: {chat_name} ({len(messages)} сообщений) ---{filter_note}{formatted}\n"
                 )
 
         if all_empty:
@@ -325,14 +331,20 @@ class ChatSummarizer:
         for chat_info in chats_with_messages:
             chat_name = chat_info['chat_name']
             messages = chat_info['messages']
+            content_filter = chat_info.get('content_filter', '')
 
             if not messages:
                 continue
 
+            # Build filter instruction if specified
+            filter_note = ""
+            if content_filter:
+                filter_note = f"\n[ФИЛЬТР: Анализируй только контент, связанный с: {content_filter}. Остальные сообщения игнорируй.]\n"
+
             total_messages += len(messages)
             formatted = self._format_messages(messages)
             chats_data_parts.append(
-                f"--- Чат: {chat_name} ({len(messages)} сообщений) ---\n{formatted}\n"
+                f"--- Чат: {chat_name} ({len(messages)} сообщений) ---{filter_note}{formatted}\n"
             )
 
         if total_messages == 0:

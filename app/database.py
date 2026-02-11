@@ -48,12 +48,24 @@ async def init_db():
                 original_title TEXT NOT NULL,
                 custom_name TEXT,
                 is_monitored INTEGER DEFAULT 0,
+                content_filter TEXT,
+                selected_topics TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (account_id) REFERENCES accounts(id),
                 FOREIGN KEY (complex_id) REFERENCES complexes(id),
                 UNIQUE(telegram_id, account_id)
             )
         """)
+
+        # Add content_filter and selected_topics columns if they don't exist (for existing DBs)
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN content_filter TEXT")
+        except:
+            pass
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN selected_topics TEXT")
+        except:
+            pass
 
         # Settings table (for storing editable reglament etc)
         await db.execute("""
@@ -228,7 +240,8 @@ async def get_chat(chat_id: int) -> Optional[dict]:
 
 
 async def update_chat(chat_id: int, custom_name: Optional[str] = None,
-                      complex_id: Optional[int] = None, is_monitored: Optional[bool] = None):
+                      complex_id: Optional[int] = None, is_monitored: Optional[bool] = None,
+                      content_filter: Optional[str] = None, selected_topics: Optional[str] = None):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         updates = []
         params = []
@@ -244,6 +257,14 @@ async def update_chat(chat_id: int, custom_name: Optional[str] = None,
         if is_monitored is not None:
             updates.append("is_monitored = ?")
             params.append(1 if is_monitored else 0)
+
+        if content_filter is not None:
+            updates.append("content_filter = ?")
+            params.append(content_filter if content_filter else None)
+
+        if selected_topics is not None:
+            updates.append("selected_topics = ?")
+            params.append(selected_topics if selected_topics else None)
 
         if updates:
             params.append(chat_id)

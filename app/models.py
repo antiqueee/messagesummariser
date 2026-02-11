@@ -95,6 +95,8 @@ class ChatUpdateRequest(BaseModel):
     custom_name: Optional[str] = None
     complex_id: Optional[int] = None
     is_monitored: Optional[bool] = None
+    content_filter: Optional[str] = None
+    selected_topics: Optional[str] = None  # JSON string of topic IDs
 
 
 class GenerateReportRequest(BaseModel):

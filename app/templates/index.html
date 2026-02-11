@@ -659,9 +659,11 @@
 
     <!-- Edit Chat Modal -->
     <div id="edit-chat-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width: 600px;">
             <h3 class="modal-title">Настройки чата</h3>
             <input type="hidden" id="edit-chat-id">
+            <input type="hidden" id="edit-chat-account-id">
+            <input type="hidden" id="edit-chat-telegram-id">
             <div class="form-group">
                 <label>Оригинальное название:</label>
                 <p id="edit-chat-original" style="color: #666;"></p>
@@ -680,7 +682,28 @@
                     Включить мониторинг
                 </label>
             </div>
-            <div class="input-group">
+
+            <div style="border-top: 1px solid #e0e0e0; margin: 15px 0; padding-top: 15px;">
+                <p style="font-weight: 600; margin-bottom: 10px; color: #666; font-size: 13px;">Дополнительно (опционально)</p>
+
+                <div class="form-group">
+                    <label>Фильтр контента:</label>
+                    <input type="text" id="edit-chat-content-filter" placeholder="Например: корпус 2.2, корпус 2.3">
+                    <small style="color: #999; font-size: 12px;">AI будет фокусироваться только на указанных темах</small>
+                </div>
+
+                <div class="form-group" id="topics-section" style="display: none;">
+                    <label>Темы чата (Forum Topics):</label>
+                    <div id="edit-chat-topics" style="max-height: 200px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px;"></div>
+                    <small style="color: #999; font-size: 12px;">Выберите темы, из которых брать сообщения</small>
+                </div>
+
+                <button type="button" class="btn btn-secondary btn-small" onclick="loadChatTopics()" id="load-topics-btn">
+                    Загрузить темы чата
+                </button>
+            </div>
+
+            <div class="input-group" style="margin-top: 15px;">
                 <button class="btn btn-primary" onclick="saveChat()">Сохранить</button>
                 <button class="btn btn-secondary" onclick="closeModal('edit-chat-modal')">Отмена</button>
             </div>
@@ -966,17 +989,79 @@
             }
         }
 
+        let currentChatTopics = [];
+        let selectedTopicIds = [];
+
         async function editChat(chatId) {
             try {
                 const chat = await api(`/api/chats/${chatId}`);
                 document.getElementById('edit-chat-id').value = chatId;
+                document.getElementById('edit-chat-account-id').value = chat.account_id;
+                document.getElementById('edit-chat-telegram-id').value = chat.telegram_id;
                 document.getElementById('edit-chat-original').textContent = chat.original_title;
                 document.getElementById('edit-chat-name').value = chat.custom_name || '';
                 document.getElementById('edit-chat-complex').value = chat.complex_id || '';
                 document.getElementById('edit-chat-monitored').checked = chat.is_monitored;
+                document.getElementById('edit-chat-content-filter').value = chat.content_filter || '';
+
+                // Reset topics section
+                document.getElementById('topics-section').style.display = 'none';
+                document.getElementById('edit-chat-topics').innerHTML = '';
+                document.getElementById('load-topics-btn').style.display = 'inline-block';
+                currentChatTopics = [];
+
+                // Parse selected topics
+                selectedTopicIds = [];
+                if (chat.selected_topics) {
+                    try {
+                        selectedTopicIds = JSON.parse(chat.selected_topics);
+                    } catch (e) {}
+                }
+
                 showModal('edit-chat-modal');
             } catch (e) {
                 alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function loadChatTopics() {
+            const chatId = document.getElementById('edit-chat-id').value;
+            const btn = document.getElementById('load-topics-btn');
+            const container = document.getElementById('edit-chat-topics');
+            const section = document.getElementById('topics-section');
+
+            btn.textContent = 'Загрузка...';
+            btn.disabled = true;
+
+            try {
+                const data = await api(`/api/chats/${chatId}/topics`);
+
+                if (!data.is_forum || data.topics.length === 0) {
+                    container.innerHTML = '<p style="color: #999; font-size: 13px;">Этот чат не использует темы (Forum Topics)</p>';
+                    section.style.display = 'block';
+                    btn.style.display = 'none';
+                    return;
+                }
+
+                currentChatTopics = data.topics;
+                container.innerHTML = data.topics.map(topic => `
+                    <label style="display: flex; align-items: center; gap: 10px; padding: 8px; cursor: pointer;">
+                        <input type="checkbox" class="topic-checkbox" value="${topic.id}"
+                               ${selectedTopicIds.includes(topic.id) ? 'checked' : ''}
+                               style="width: 16px; height: 16px;">
+                        <span>${escapeHtml(topic.title)}</span>
+                    </label>
+                `).join('');
+
+                section.style.display = 'block';
+                btn.style.display = 'none';
+
+            } catch (e) {
+                container.innerHTML = `<p style="color: #c62828;">Ошибка загрузки тем: ${e.message}</p>`;
+                section.style.display = 'block';
+            } finally {
+                btn.textContent = 'Загрузить темы чата';
+                btn.disabled = false;
             }
         }
 
@@ -985,12 +1070,20 @@
             const customName = document.getElementById('edit-chat-name').value;
             const complexId = document.getElementById('edit-chat-complex').value;
             const isMonitored = document.getElementById('edit-chat-monitored').checked;
+            const contentFilter = document.getElementById('edit-chat-content-filter').value;
+
+            // Collect selected topic IDs
+            const topicCheckboxes = document.querySelectorAll('.topic-checkbox:checked');
+            const selectedTopics = Array.from(topicCheckboxes).map(cb => parseInt(cb.value));
+            const selectedTopicsJson = selectedTopics.length > 0 ? JSON.stringify(selectedTopics) : null;
 
             try {
                 await api(`/api/chats/${chatId}`, 'PUT', {
                     custom_name: customName || null,
                     complex_id: complexId ? parseInt(complexId) : 0,
-                    is_monitored: isMonitored
+                    is_monitored: isMonitored,
+                    content_filter: contentFilter || null,
+                    selected_topics: selectedTopicsJson
                 });
                 closeModal('edit-chat-modal');
                 loadChats();

@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional, AsyncGenerator
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.types import User, Chat, Channel, Message
+from telethon.tl.types import User, Chat, Channel, Message, ForumTopic
+from telethon.tl.functions.channels import GetForumTopicsRequest
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 
 SESSIONS_DIR = Path(__file__).parent.parent / "sessions"
@@ -152,15 +153,64 @@ class TelegramClientManager:
 
         return dialogs
 
+    async def get_forum_topics(self, account_id: int, chat_telegram_id: int) -> list[dict]:
+        """Get forum topics for a chat (if it's a forum)"""
+        client = await self.get_client(account_id)
+        if not client:
+            return []
+
+        try:
+            # Get entity to check if it's a forum
+            entity = await client.get_entity(chat_telegram_id)
+            if not getattr(entity, 'forum', False):
+                return []  # Not a forum chat
+
+            # Get topics
+            result = await client(GetForumTopicsRequest(
+                channel=chat_telegram_id,
+                offset_date=None,
+                offset_id=0,
+                offset_topic=0,
+                limit=100
+            ))
+
+            topics = []
+            for topic in result.topics:
+                if isinstance(topic, ForumTopic):
+                    topics.append({
+                        'id': topic.id,
+                        'title': topic.title,
+                        'icon_emoji': getattr(topic, 'icon_emoji_id', None),
+                    })
+
+            return topics
+
+        except Exception as e:
+            print(f"[get_forum_topics] Error: {e}")
+            return []
+
+    async def is_forum_chat(self, account_id: int, chat_telegram_id: int) -> bool:
+        """Check if a chat is a forum (has topics)"""
+        client = await self.get_client(account_id)
+        if not client:
+            return False
+
+        try:
+            entity = await client.get_entity(chat_telegram_id)
+            return getattr(entity, 'forum', False)
+        except Exception:
+            return False
+
     async def get_messages(
             self,
             account_id: int,
             chat_telegram_id: int,
             start_date: datetime,
             end_date: datetime,
-            limit: int = 10000
+            limit: int = 10000,
+            topic_ids: list[int] = None
     ) -> list[dict]:
-        """Get messages from a chat within a date range"""
+        """Get messages from a chat within a date range, optionally filtered by topic IDs"""
         client = await self.get_client(account_id)
         if not client:
             print(f"[get_messages] No client for account {account_id}")
@@ -170,7 +220,8 @@ class TelegramClientManager:
         start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
         end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
 
-        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}")
+        topic_filter = set(topic_ids) if topic_ids else None
+        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}, topics={topic_filter}")
 
         messages = []
 
@@ -193,6 +244,23 @@ class TelegramClientManager:
                 if not message.text:
                     continue
 
+                # Filter by topic if specified
+                if topic_filter is not None:
+                    # Get topic ID from message (reply_to contains topic info in forums)
+                    msg_topic_id = None
+                    if hasattr(message, 'reply_to') and message.reply_to:
+                        # In forums, reply_to_top_id is the topic ID
+                        msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+                        if msg_topic_id is None:
+                            msg_topic_id = getattr(message.reply_to, 'reply_to_msg_id', None)
+
+                    # Messages in General topic have no reply_to, but topic ID is 1
+                    if msg_topic_id is None:
+                        msg_topic_id = 1  # General topic
+
+                    if msg_topic_id not in topic_filter:
+                        continue
+
                 sender_name = 'Unknown'
                 sender_id = 0
 
@@ -206,13 +274,19 @@ class TelegramClientManager:
                     else:
                         sender_name = getattr(message.sender, 'title', 'Unknown')
 
+                # Get topic ID for reference
+                msg_topic_id = None
+                if hasattr(message, 'reply_to') and message.reply_to:
+                    msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+
                 messages.append({
                     'message_id': message.id,
                     'sender_id': sender_id,
                     'sender_name': sender_name,
                     'text': message.text,
                     'date': msg_date.isoformat() + 'Z',
-                    'reply_to': message.reply_to_msg_id
+                    'reply_to': message.reply_to_msg_id,
+                    'topic_id': msg_topic_id
                 })
 
             print(f"[get_messages] Found {len(messages)} messages")

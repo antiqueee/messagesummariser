@@ -238,9 +238,27 @@ async def update_chat(chat_id: int, data: ChatUpdateRequest):
         chat_id,
         custom_name=data.custom_name,
         complex_id=data.complex_id,
-        is_monitored=data.is_monitored
+        is_monitored=data.is_monitored,
+        content_filter=data.content_filter,
+        selected_topics=data.selected_topics
     )
     return {"message": "Chat updated"}
+
+
+@app.get("/api/chats/{chat_id}/topics")
+async def get_chat_topics(chat_id: int):
+    """Get forum topics for a chat (if it's a forum)"""
+    chat = await db.get_chat(chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    try:
+        tm = get_telegram_manager()
+        topics = await tm.get_forum_topics(chat['account_id'], chat['telegram_id'])
+        is_forum = len(topics) > 0
+        return {"is_forum": is_forum, "topics": topics}
+    except RuntimeError:
+        return {"is_forum": False, "topics": []}
 
 
 # ============== Report Generation ==============
@@ -296,15 +314,26 @@ async def generate_report(data: GenerateReportRequest):
         sorted_chats = sort_chats_by_building(chats)
 
         for chat in sorted_chats:
+            # Parse selected topics if any
+            topic_ids = None
+            if chat.get('selected_topics'):
+                try:
+                    import json
+                    topic_ids = json.loads(chat['selected_topics'])
+                except:
+                    pass
+
             # Get messages from Telegram
             messages = await tm.get_messages(
                 account_id=chat['account_id'],
                 chat_telegram_id=chat['telegram_id'],
                 start_date=data.start_date,
-                end_date=data.end_date
+                end_date=data.end_date,
+                topic_ids=topic_ids
             )
 
             chat_name = chat['custom_name'] or chat['original_title']
+            content_filter = chat.get('content_filter', '')
 
             chat_data = {
                 'chat_id': chat['id'],
@@ -316,7 +345,8 @@ async def generate_report(data: GenerateReportRequest):
             complex_data['chats'].append(chat_data)
             chats_with_messages.append({
                 'chat_name': chat_name,
-                'messages': messages
+                'messages': messages,
+                'content_filter': content_filter
             })
 
         # If AI is available, generate summary for the whole complex
@@ -402,18 +432,30 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
         if not chat:
             continue
 
+        # Parse selected topics if any
+        topic_ids = None
+        if chat.get('selected_topics'):
+            try:
+                import json
+                topic_ids = json.loads(chat['selected_topics'])
+            except:
+                pass
+
         # Get messages from Telegram
         messages = await tm.get_messages(
             account_id=chat['account_id'],
             chat_telegram_id=chat['telegram_id'],
             start_date=data.start_date,
-            end_date=data.end_date
+            end_date=data.end_date,
+            topic_ids=topic_ids
         )
 
         chat_name = chat['custom_name'] or chat['original_title']
+        content_filter = chat.get('content_filter', '')
         chats_with_messages.append({
             'chat_name': chat_name,
-            'messages': messages
+            'messages': messages,
+            'content_filter': content_filter
         })
 
     # Load custom rules from DB
