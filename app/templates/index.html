@@ -1155,8 +1155,15 @@
         async function generateReport() {
             const checkboxes = document.querySelectorAll('.report-complex-checkbox:checked');
             const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+            // Debug: show raw values
+            const rawStart = document.getElementById('report-start-date').value;
+            const rawEnd = document.getElementById('report-end-date').value;
+            console.log('Raw date values:', rawStart, rawEnd);
+
             const startDate = getISODateFromInput('report-start-date');
             const endDate = getISODateFromInput('report-end-date');
+            console.log('Parsed dates:', startDate, endDate);
 
             if (complexIds.length === 0) {
                 alert('Выберите хотя бы один ЖК');
@@ -1175,11 +1182,16 @@
             resultEl.innerHTML = '';
 
             try {
-                // datetime-local value is YYYY-MM-DDTHH:MM, send directly
+                // Debug alert - remove after fixing
+                const sendStart = startDate + ':00';
+                const sendEnd = endDate + ':00';
+                console.log('Sending:', sendStart, sendEnd);
+                // alert('Отправляем даты:\n' + sendStart + '\n' + sendEnd);
+
                 const report = await api('/api/reports/generate', 'POST', {
                     complex_ids: complexIds,
-                    start_date: startDate + ':00',
-                    end_date: endDate + ':00'
+                    start_date: sendStart,
+                    end_date: sendEnd
                 });
 
                 loadingEl.style.display = 'none';
