@@ -16,6 +16,8 @@ from . import database as db
 def extract_building_number(chat_name: str) -> tuple[int, str]:
     """Extract building number for sorting. Returns (sort_key, name).
     Building chats (корпус X, секция X) get priority, general chats go last."""
+    if not chat_name:
+        return (1, 0, '')  # Empty names go last
     name_lower = chat_name.lower()
 
     # Look for patterns like "корпус 17", "корп. 5", "к.12", "секция 3"
@@ -39,7 +41,7 @@ def extract_building_number(chat_name: str) -> tuple[int, str]:
 
 def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     """Sort chats: buildings first (by number), then general chats"""
-    return sorted(chats, key=lambda c: extract_building_number(c.get('chat_name', c.get('custom_name', c.get('original_title', '')))))
+    return sorted(chats, key=lambda c: extract_building_number(c.get('custom_name') or c.get('original_title') or ''))
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
 from .models import (
