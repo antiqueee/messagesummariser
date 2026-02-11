@@ -1123,11 +1123,40 @@
             return date.toISOString().slice(0, 16);
         }
 
+        function getISODateFromInput(inputId) {
+            // Get date from input and ensure it's in ISO format
+            const input = document.getElementById(inputId);
+            const value = input.value;
+            if (!value) return null;
+
+            // If already ISO format (YYYY-MM-DDTHH:MM), return as is
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+                return value;
+            }
+
+            // Try to parse as Date and convert to ISO
+            try {
+                const date = new Date(value);
+                if (!isNaN(date.getTime())) {
+                    return date.toISOString().slice(0, 16);
+                }
+            } catch (e) {}
+
+            // Fallback: try to parse DD.MM.YYYY, HH:MM or similar formats
+            const match = value.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})[,\s]+(\d{1,2}):(\d{2})/);
+            if (match) {
+                const [, day, month, year, hour, minute] = match;
+                return `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}T${hour.padStart(2,'0')}:${minute}`;
+            }
+
+            return value; // Return as is, let backend handle error
+        }
+
         async function generateReport() {
             const checkboxes = document.querySelectorAll('.report-complex-checkbox:checked');
             const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
-            const startDate = document.getElementById('report-start-date').value;
-            const endDate = document.getElementById('report-end-date').value;
+            const startDate = getISODateFromInput('report-start-date');
+            const endDate = getISODateFromInput('report-end-date');
 
             if (complexIds.length === 0) {
                 alert('Выберите хотя бы один ЖК');
@@ -1436,8 +1465,8 @@
             }
 
             const chatIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
-            const startDate = document.getElementById('negativists-start-date').value;
-            const endDate = document.getElementById('negativists-end-date').value;
+            const startDate = getISODateFromInput('negativists-start-date');
+            const endDate = getISODateFromInput('negativists-end-date');
 
             if (!startDate || !endDate) {
                 alert('Выберите период');
