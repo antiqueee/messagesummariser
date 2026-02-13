@@ -358,6 +358,9 @@ async def generate_report(data: GenerateReportRequest):
             if rules is None:
                 rules = get_default_report_rules()
 
+            total_msgs = sum(c['message_count'] for c in complex_data['chats'])
+            print(f"[Report] Summarizing {complex_name}: {len(chats_with_messages)} chats, {total_msgs} messages")
+
             try:
                 summary_text = await summarizer.summarize_complex(
                     complex_name=complex_name,
@@ -367,7 +370,9 @@ async def generate_report(data: GenerateReportRequest):
                     rules=rules
                 )
                 complex_data['summary'] = summary_text
+                print(f"[Report] Done: {complex_name}")
             except Exception as e:
+                print(f"[Report] Error for {complex_name}: {e}")
                 complex_data['summary'] = f'Ошибка AI-суммаризации: {str(e)}'
 
         report['complexes'].append(complex_data)

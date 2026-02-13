@@ -176,6 +176,9 @@ class ChatSummarizer:
 
     async def _call_api(self, prompt: str) -> str:
         """Make API call to OpenRouter with proper UTF-8 encoding"""
+        prompt_len = len(prompt)
+        print(f"[API] Calling {self.model}, prompt length: {prompt_len} chars")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json; charset=utf-8",
@@ -193,6 +196,7 @@ class ChatSummarizer:
 
         # Explicitly encode as UTF-8 bytes to avoid ascii encoding issues
         json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        print(f"[API] Request size: {len(json_bytes)} bytes, sending...")
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
@@ -200,6 +204,8 @@ class ChatSummarizer:
                 headers=headers,
                 content=json_bytes
             )
+
+            print(f"[API] Response status: {response.status_code}")
 
             # Get response data for better error messages
             try:
@@ -211,8 +217,10 @@ class ChatSummarizer:
                 error_msg = data.get("error", {})
                 if isinstance(error_msg, dict):
                     error_msg = error_msg.get("message", str(data))
+                print(f"[API] Error: {error_msg}")
                 raise Exception(f"OpenRouter API error: {error_msg}")
 
+            print(f"[API] Success, response length: {len(data['choices'][0]['message']['content'])} chars")
             return data["choices"][0]["message"]["content"]
 
     async def summarize_chat(
