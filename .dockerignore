@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+*.db
+# Note: sessions/ is NOT excluded - Telegram sessions are included in image

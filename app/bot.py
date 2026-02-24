@@ -17,12 +17,32 @@ router = Router()
 
 # Will be set during init
 ADMIN_ID: int = 0
+DEMO_USER_IDS: set[int] = set()
+DEMO_COMPLEX_ID: Optional[int] = None
 REPORT_RULES_KEY = "report_rules"
 NEGATIVISTS_RULES_KEY = "negativists_rules"
 
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
+
+
+def is_demo_user(user_id: int) -> bool:
+    return user_id in DEMO_USER_IDS
+
+
+def can_access(user_id: int) -> bool:
+    """Check if user can access the bot (admin or demo user)"""
+    return is_admin(user_id) or is_demo_user(user_id)
+
+
+def get_user_complex_ids(user_id: int) -> Optional[list[int]]:
+    """Get complex IDs that user can access. None means all complexes."""
+    if is_admin(user_id):
+        return None  # Admin sees all
+    if is_demo_user(user_id) and DEMO_COMPLEX_ID:
+        return [DEMO_COMPLEX_ID]  # Demo user sees only demo complex
+    return []
 
 
 def extract_building_number(chat_name: str) -> tuple:
@@ -113,11 +133,12 @@ def format_period(start: datetime, end: datetime) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    if not is_admin(message.from_user.id):
+    if not can_access(message.from_user.id):
         return
 
+    mode = "демо-режим" if is_demo_user(message.from_user.id) else "полный доступ"
     await message.answer(
-        "AI-агент охранки\n\n"
+        f"AI-агент охранки ({mode})\n\n"
         "Команды:\n"
         "/report — Сформировать сводку\n"
         "/negativists — Выявить негативщиков\n"
@@ -128,26 +149,43 @@ async def cmd_start(message: Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    if not is_admin(message.from_user.id):
+    if not can_access(message.from_user.id):
         return
 
-    await message.answer(
+    help_text = (
         "Как пользоваться:\n\n"
         "1. /report — выберите период, бот сформирует сводку по всем ЖК\n"
         "2. /negativists — выберите период, бот проанализирует негативщиков\n"
-        "3. /chats — покажет список ЖК и подключённых чатов\n\n"
-        "Настройка чатов, ЖК и аккаунтов — через веб-интерфейс."
+        "3. /chats — покажет список ЖК и подключённых чатов\n"
     )
+
+    if is_demo_user(message.from_user.id):
+        help_text += "\nВы в демо-режиме. Доступен только тестовый ЖК."
+    else:
+        help_text += "\nНастройка чатов, ЖК и аккаунтов — через веб-интерфейс."
+
+    await message.answer(help_text)
 
 
 @router.message(Command("chats"))
 async def cmd_chats(message: Message):
-    if not is_admin(message.from_user.id):
+    if not can_access(message.from_user.id):
         return
+
+    user_id = message.from_user.id
+    allowed_complex_ids = get_user_complex_ids(user_id)
 
     complexes = await db.get_complexes()
     if not complexes:
         await message.answer("Нет добавленных ЖК. Настройте через веб-интерфейс.")
+        return
+
+    # Filter complexes for demo users
+    if allowed_complex_ids is not None:
+        complexes = [c for c in complexes if c['id'] in allowed_complex_ids]
+
+    if not complexes:
+        await message.answer("Нет доступных ЖК для отображения.")
         return
 
     text_parts = ["Отслеживаемые ЖК и чаты:\n"]
@@ -167,7 +205,7 @@ async def cmd_chats(message: Message):
 
 @router.message(Command("report"))
 async def cmd_report(message: Message):
-    if not is_admin(message.from_user.id):
+    if not can_access(message.from_user.id):
         return
 
     await message.answer("Выберите период для сводки:", reply_markup=period_keyboard("report"))
@@ -175,9 +213,10 @@ async def cmd_report(message: Message):
 
 @router.callback_query(F.data.startswith("report:"))
 async def cb_report(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not can_access(callback.from_user.id):
         return
 
+    user_id = callback.from_user.id
     period = callback.data.split(":")[1]
     start_date, end_date = get_period_dates(period)
 
@@ -186,7 +225,8 @@ async def cb_report(callback: CallbackQuery):
     )
 
     try:
-        report = await generate_full_report(start_date, end_date)
+        allowed_complex_ids = get_user_complex_ids(user_id)
+        report = await generate_full_report(start_date, end_date, allowed_complex_ids)
         if not report:
             await callback.message.edit_text("Нет данных для отчёта. Проверьте что есть ЖК с отслеживаемыми чатами.")
             return
@@ -211,8 +251,12 @@ async def cb_report(callback: CallbackQuery):
         await callback.message.edit_text(f"Ошибка: {str(e)}")
 
 
-async def generate_full_report(start_date: datetime, end_date: datetime) -> list[dict]:
-    """Generate report for all complexes with monitored chats"""
+async def generate_full_report(start_date: datetime, end_date: datetime, allowed_complex_ids: Optional[list[int]] = None) -> list[dict]:
+    """Generate report for all complexes with monitored chats
+
+    Args:
+        allowed_complex_ids: List of complex IDs to include. None means all.
+    """
     try:
         tm = get_telegram_manager()
     except RuntimeError:
@@ -224,6 +268,11 @@ async def generate_full_report(start_date: datetime, end_date: datetime) -> list
         summarizer = None
 
     complexes = await db.get_complexes()
+
+    # Filter complexes if restrictions apply
+    if allowed_complex_ids is not None:
+        complexes = [c for c in complexes if c['id'] in allowed_complex_ids]
+
     results = []
 
     # Load rules
@@ -292,7 +341,7 @@ async def generate_full_report(start_date: datetime, end_date: datetime) -> list
 
 @router.message(Command("negativists"))
 async def cmd_negativists(message: Message):
-    if not is_admin(message.from_user.id):
+    if not can_access(message.from_user.id):
         return
 
     buttons = [
@@ -310,9 +359,10 @@ async def cmd_negativists(message: Message):
 
 @router.callback_query(F.data.startswith("neg:"))
 async def cb_negativists(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if not can_access(callback.from_user.id):
         return
 
+    user_id = callback.from_user.id
     period = callback.data.split(":")[1]
     start_date, end_date = get_period_dates(period)
 
@@ -321,7 +371,8 @@ async def cb_negativists(callback: CallbackQuery):
     )
 
     try:
-        result = await analyze_all_negativists(start_date, end_date)
+        allowed_complex_ids = get_user_complex_ids(user_id)
+        result = await analyze_all_negativists(start_date, end_date, allowed_complex_ids)
 
         if not result or not result.get('negativists'):
             text = f"За период {format_period(start_date, end_date)} негативщиков не выявлено."
@@ -361,8 +412,12 @@ async def cb_negativists(callback: CallbackQuery):
         await callback.message.edit_text(f"Ошибка: {str(e)}")
 
 
-async def analyze_all_negativists(start_date: datetime, end_date: datetime) -> dict:
-    """Analyze negativists across all monitored chats"""
+async def analyze_all_negativists(start_date: datetime, end_date: datetime, allowed_complex_ids: Optional[list[int]] = None) -> dict:
+    """Analyze negativists across all monitored chats
+
+    Args:
+        allowed_complex_ids: List of complex IDs to include. None means all.
+    """
     try:
         tm = get_telegram_manager()
     except RuntimeError:
@@ -375,6 +430,11 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime) -> d
 
     # Get all monitored chats
     complexes = await db.get_complexes()
+
+    # Filter complexes if restrictions apply
+    if allowed_complex_ids is not None:
+        complexes = [c for c in complexes if c['id'] in allowed_complex_ids]
+
     chats_with_messages = []
 
     for comp in complexes:
@@ -427,16 +487,26 @@ _bot: Optional[Bot] = None
 _dp: Optional[Dispatcher] = None
 
 
-async def start_bot(token: str, admin_id: int):
-    """Start the bot polling in background"""
-    global _bot, _dp, ADMIN_ID
+async def start_bot(token: str, admin_id: int, demo_user_ids: Optional[set[int]] = None, demo_complex_id: Optional[int] = None):
+    """Start the bot polling in background
+
+    Args:
+        token: Bot API token
+        admin_id: Admin's Telegram user ID
+        demo_user_ids: Set of Telegram user IDs for demo access
+        demo_complex_id: Complex ID that demo users can access
+    """
+    global _bot, _dp, ADMIN_ID, DEMO_USER_IDS, DEMO_COMPLEX_ID
     ADMIN_ID = admin_id
+    DEMO_USER_IDS = demo_user_ids or set()
+    DEMO_COMPLEX_ID = demo_complex_id
 
     _bot = Bot(token=token)
     _dp = Dispatcher()
     _dp.include_router(router)
 
-    print(f"[Bot] Starting bot, admin_id={admin_id}")
+    demo_info = f", demo_users={len(DEMO_USER_IDS)}, demo_complex={DEMO_COMPLEX_ID}" if DEMO_USER_IDS else ""
+    print(f"[Bot] Starting bot, admin_id={admin_id}{demo_info}")
 
     # Start polling in background task
     asyncio.create_task(_run_polling())

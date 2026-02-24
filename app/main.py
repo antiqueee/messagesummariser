@@ -77,10 +77,26 @@ async def lifespan(app: FastAPI):
     # Start Telegram bot
     bot_token = os.getenv('BOT_TOKEN')
     bot_admin_id = os.getenv('BOT_ADMIN_ID')
+
+    # Parse demo mode settings
+    demo_user_ids_str = os.getenv('DEMO_USER_IDS', '')
+    demo_user_ids = set()
+    if demo_user_ids_str.strip():
+        for uid in demo_user_ids_str.split(','):
+            uid = uid.strip()
+            if uid.isdigit():
+                demo_user_ids.add(int(uid))
+
+    demo_complex_id_str = os.getenv('DEMO_COMPLEX_ID', '')
+    demo_complex_id = int(demo_complex_id_str) if demo_complex_id_str.strip().isdigit() else None
+
     print(f"[Bot] Token: {'set' if bot_token else 'NOT SET'}, Admin ID: {bot_admin_id}")
+    if demo_user_ids:
+        print(f"[Bot] Demo mode: {len(demo_user_ids)} users, complex_id={demo_complex_id}")
+
     if bot_token and bot_admin_id:
         try:
-            await start_bot(bot_token, int(bot_admin_id))
+            await start_bot(bot_token, int(bot_admin_id), demo_user_ids, demo_complex_id)
             print(f"[Bot] Telegram bot started, admin_id={bot_admin_id}")
         except Exception as e:
             import traceback
