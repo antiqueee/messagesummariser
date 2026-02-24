@@ -44,6 +44,7 @@ def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     return sorted(chats, key=lambda c: extract_building_number(c.get('custom_name') or c.get('original_title') or ''))
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
+from .bot import start_bot, stop_bot
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
@@ -73,9 +74,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"WARNING: Summarizer init skipped ({e}). Summarization will be available later.")
 
+    # Start Telegram bot
+    bot_token = os.getenv('BOT_TOKEN')
+    bot_admin_id = os.getenv('BOT_ADMIN_ID')
+    if bot_token and bot_admin_id:
+        try:
+            await start_bot(bot_token, int(bot_admin_id))
+            print(f"Telegram bot started, admin_id={bot_admin_id}")
+        except Exception as e:
+            print(f"WARNING: Bot start failed ({e})")
+
     yield
 
     # Shutdown
+    try:
+        await stop_bot()
+    except:
+        pass
     try:
         tm = get_telegram_manager()
         await tm.close_all()
