@@ -153,7 +153,7 @@ async def cmd_chats(message: Message):
     text_parts = ["Отслеживаемые ЖК и чаты:\n"]
 
     for comp in complexes:
-        chats = await db.get_chats_by_complex(comp['id'])
+        chats = await db.get_chats(complex_id=comp['id'])
         monitored = [c for c in chats if c['is_monitored']]
         text_parts.append(f"\n{comp['name']} ({len(monitored)} чатов)")
         for chat in monitored:
@@ -232,7 +232,7 @@ async def generate_full_report(start_date: datetime, end_date: datetime) -> list
         rules = get_default_report_rules()
 
     for comp in complexes:
-        chats = await db.get_chats_by_complex(comp['id'])
+        chats = await db.get_chats(complex_id=comp['id'])
         monitored = [c for c in chats if c['is_monitored']]
 
         if not monitored:
@@ -378,7 +378,7 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime) -> d
     chats_with_messages = []
 
     for comp in complexes:
-        chats = await db.get_chats_by_complex(comp['id'])
+        chats = await db.get_chats(complex_id=comp['id'])
         monitored = [c for c in chats if c['is_monitored']]
 
         for chat in monitored:
