@@ -77,12 +77,17 @@ async def lifespan(app: FastAPI):
     # Start Telegram bot
     bot_token = os.getenv('BOT_TOKEN')
     bot_admin_id = os.getenv('BOT_ADMIN_ID')
+    print(f"[Bot] Token: {'set' if bot_token else 'NOT SET'}, Admin ID: {bot_admin_id}")
     if bot_token and bot_admin_id:
         try:
             await start_bot(bot_token, int(bot_admin_id))
-            print(f"Telegram bot started, admin_id={bot_admin_id}")
+            print(f"[Bot] Telegram bot started, admin_id={bot_admin_id}")
         except Exception as e:
-            print(f"WARNING: Bot start failed ({e})")
+            import traceback
+            print(f"[Bot] WARNING: Bot start failed: {e}")
+            traceback.print_exc()
+    else:
+        print("[Bot] Bot not started - BOT_TOKEN or BOT_ADMIN_ID not set in .env")
 
     yield
 
