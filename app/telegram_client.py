@@ -52,6 +52,7 @@ class TelegramClientManager:
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start authentication process for a new account"""
         session_path = self._get_session_path(account_id)
+        print(f"[Auth] Starting auth for account {account_id}, phone: {phone}")
 
         client = TelegramClient(
             str(session_path),
@@ -59,8 +60,16 @@ class TelegramClientManager:
             self.api_hash
         )
         await client.connect()
+        print(f"[Auth] Connected to Telegram")
 
-        result = await client.send_code_request(phone)
+        try:
+            result = await client.send_code_request(phone)
+            print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
+        except Exception as e:
+            print(f"[Auth] ERROR sending code: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
         self._pending_auth[account_id] = {
             'client': client,
