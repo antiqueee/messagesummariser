@@ -217,7 +217,8 @@ class TelegramClientManager:
             start_date: datetime,
             end_date: datetime,
             limit: int = 10000,
-            topic_ids: list[int] = None
+            topic_ids: list[int] = None,
+            timeout_seconds: int = 60
     ) -> list[dict]:
         """Get messages from a chat within a date range, optionally filtered by topic IDs"""
         client = await self.get_client(account_id)
@@ -230,11 +231,12 @@ class TelegramClientManager:
         end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
 
         topic_filter = set(topic_ids) if topic_ids else None
-        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}, topics={topic_filter}")
+        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}, topics={topic_filter}", flush=True)
 
         messages = []
 
-        try:
+        async def fetch_messages():
+            nonlocal messages
             async for message in client.iter_messages(
                     chat_telegram_id,
                     offset_date=end_naive,
@@ -298,10 +300,15 @@ class TelegramClientManager:
                     'topic_id': msg_topic_id
                 })
 
-            print(f"[get_messages] Found {len(messages)} messages")
+        try:
+            await asyncio.wait_for(fetch_messages(), timeout=timeout_seconds)
+            print(f"[get_messages] Found {len(messages)} messages", flush=True)
+
+        except asyncio.TimeoutError:
+            print(f"[get_messages] Timeout after {timeout_seconds}s, got {len(messages)} messages so far", flush=True)
 
         except Exception as e:
-            print(f"[get_messages] Error fetching messages: {e}")
+            print(f"[get_messages] Error fetching messages: {e}", flush=True)
             import traceback
             traceback.print_exc()
             return []

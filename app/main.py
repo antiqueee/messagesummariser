@@ -337,8 +337,13 @@ async def generate_report(data: GenerateReportRequest):
         'complexes': []
     }
 
+    complex_index = 0
+    total_complexes = len(chats_by_complex)
+
     for complex_id, chats in chats_by_complex.items():
+        complex_index += 1
         complex_name = chats[0]['complex_name'] if chats else 'Unknown'
+        print(f"[Report] Processing {complex_index}/{total_complexes}: {complex_name} ({len(chats)} chats)", flush=True)
 
         complex_data = {
             'complex_id': complex_id,
