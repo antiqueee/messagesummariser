@@ -21,114 +21,133 @@ class TelegramClientManager:
         self.api_hash = api_hash
         self._clients: dict[int, TelegramClient] = {}
         self._pending_auth: dict[int, dict] = {}  # account_id -> {client, phone_code_hash}
+        self._locks: dict[int, asyncio.Lock] = {}  # Lock per account to prevent concurrent access
 
     def _get_session_path(self, account_id: int) -> Path:
         return SESSIONS_DIR / f"account_{account_id}"
 
+    def _get_lock(self, account_id: int) -> asyncio.Lock:
+        """Get or create a lock for the given account"""
+        if account_id not in self._locks:
+            self._locks[account_id] = asyncio.Lock()
+        return self._locks[account_id]
+
     async def get_client(self, account_id: int) -> Optional[TelegramClient]:
         """Get or create a client for the given account"""
+        # Quick check without lock
         if account_id in self._clients:
             client = self._clients[account_id]
             if client.is_connected():
                 return client
 
-        session_path = self._get_session_path(account_id)
-        if not session_path.with_suffix('.session').exists():
+        # Use lock to prevent concurrent session access (SQLite locking issues)
+        async with self._get_lock(account_id):
+            # Double-check after acquiring lock
+            if account_id in self._clients:
+                client = self._clients[account_id]
+                if client.is_connected():
+                    return client
+
+            session_path = self._get_session_path(account_id)
+            if not session_path.with_suffix('.session').exists():
+                return None
+
+            client = TelegramClient(
+                str(session_path),
+                self.api_id,
+                self.api_hash
+            )
+            await client.connect()
+
+            if await client.is_user_authorized():
+                self._clients[account_id] = client
+                return client
+
             return None
-
-        client = TelegramClient(
-            str(session_path),
-            self.api_id,
-            self.api_hash
-        )
-        await client.connect()
-
-        if await client.is_user_authorized():
-            self._clients[account_id] = client
-            return client
-
-        return None
 
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start authentication process for a new account"""
-        session_path = self._get_session_path(account_id)
-        print(f"[Auth] Starting auth for account {account_id}, phone: {phone}")
+        async with self._get_lock(account_id):
+            session_path = self._get_session_path(account_id)
+            print(f"[Auth] Starting auth for account {account_id}, phone: {phone}")
 
-        client = TelegramClient(
-            str(session_path),
-            self.api_id,
-            self.api_hash
-        )
-        await client.connect()
-        print(f"[Auth] Connected to Telegram")
+            client = TelegramClient(
+                str(session_path),
+                self.api_id,
+                self.api_hash
+            )
+            await client.connect()
+            print(f"[Auth] Connected to Telegram")
 
-        try:
-            result = await client.send_code_request(phone)
-            print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
-        except Exception as e:
-            print(f"[Auth] ERROR sending code: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+            try:
+                result = await client.send_code_request(phone)
+                print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
+            except Exception as e:
+                print(f"[Auth] ERROR sending code: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
 
-        self._pending_auth[account_id] = {
-            'client': client,
-            'phone': phone,
-            'phone_code_hash': result.phone_code_hash
-        }
+            self._pending_auth[account_id] = {
+                'client': client,
+                'phone': phone,
+                'phone_code_hash': result.phone_code_hash
+            }
 
-        return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
+            return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
 
     async def complete_auth(self, account_id: int, code: str,
                             password: Optional[str] = None) -> dict:
         """Complete authentication with the received code"""
-        if account_id not in self._pending_auth:
-            return {'status': 'error', 'message': 'No pending authentication found'}
+        async with self._get_lock(account_id):
+            if account_id not in self._pending_auth:
+                return {'status': 'error', 'message': 'No pending authentication found'}
 
-        auth_data = self._pending_auth[account_id]
-        client = auth_data['client']
-        phone = auth_data['phone']
-        phone_code_hash = auth_data['phone_code_hash']
+            auth_data = self._pending_auth[account_id]
+            client = auth_data['client']
+            phone = auth_data['phone']
+            phone_code_hash = auth_data['phone_code_hash']
 
-        try:
-            await client.sign_in(
-                phone=phone,
-                code=code,
-                phone_code_hash=phone_code_hash
-            )
-        except SessionPasswordNeededError:
-            if password:
-                await client.sign_in(password=password)
-            else:
-                return {'status': 'password_required'}
-        except PhoneCodeInvalidError:
-            return {'status': 'error', 'message': 'Invalid code'}
-        except Exception as e:
-            return {'status': 'error', 'message': str(e)}
+            try:
+                await client.sign_in(
+                    phone=phone,
+                    code=code,
+                    phone_code_hash=phone_code_hash
+                )
+            except SessionPasswordNeededError:
+                if password:
+                    await client.sign_in(password=password)
+                else:
+                    return {'status': 'password_required'}
+            except PhoneCodeInvalidError:
+                return {'status': 'error', 'message': 'Invalid code'}
+            except Exception as e:
+                return {'status': 'error', 'message': str(e)}
 
-        if await client.is_user_authorized():
-            self._clients[account_id] = client
-            del self._pending_auth[account_id]
-            return {'status': 'success'}
+            if await client.is_user_authorized():
+                self._clients[account_id] = client
+                del self._pending_auth[account_id]
+                return {'status': 'success'}
 
-        return {'status': 'error', 'message': 'Authorization failed'}
+            return {'status': 'error', 'message': 'Authorization failed'}
 
     async def disconnect_account(self, account_id: int):
         """Disconnect and remove client session"""
-        if account_id in self._clients:
-            await self._clients[account_id].disconnect()
-            del self._clients[account_id]
+        async with self._get_lock(account_id):
+            if account_id in self._clients:
+                await self._clients[account_id].disconnect()
+                del self._clients[account_id]
 
-        if account_id in self._pending_auth:
-            await self._pending_auth[account_id]['client'].disconnect()
-            del self._pending_auth[account_id]
+            if account_id in self._pending_auth:
+                await self._pending_auth[account_id]['client'].disconnect()
+                del self._pending_auth[account_id]
 
-        # Remove session files
-        session_path = self._get_session_path(account_id)
-        for suffix in ['.session', '.session-journal']:
-            path = session_path.with_suffix(suffix)
-            if path.exists():
-                path.unlink()
+            # Remove session files
+            session_path = self._get_session_path(account_id)
+            for suffix in ['.session', '.session-journal']:
+                path = session_path.with_suffix(suffix)
+                if path.exists():
+                    path.unlink()
 
     async def get_dialogs(self, account_id: int) -> list[dict]:
         """Get all dialogs (chats) for an account"""
