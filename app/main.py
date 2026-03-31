@@ -220,6 +220,41 @@ async def sync_account_chats(account_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/accounts/{account_id}/service-messages")
+async def get_service_messages(account_id: int, limit: int = 20):
+    """Get service messages from Telegram (login codes, security alerts, etc.)"""
+    account = await db.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if not account['is_authorized']:
+        raise HTTPException(status_code=400, detail="Account not authorized")
+
+    try:
+        tm = get_telegram_manager()
+        client = await tm.get_client(account_id)
+
+        if not client:
+            raise HTTPException(status_code=400, detail="Session expired or invalid")
+
+        # 777000 is Telegram's official user_id for service notifications
+        messages = await client.get_messages(777000, limit=limit)
+
+        result = []
+        for msg in messages:
+            if msg.text:
+                result.append({
+                    'id': msg.id,
+                    'date': msg.date.isoformat(),
+                    'text': msg.text
+                })
+
+        return {"messages": result, "account_phone": account['phone']}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Complex (ЖК) Endpoints ==============
 
 @app.get("/api/complexes")
