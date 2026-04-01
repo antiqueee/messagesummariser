@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     if openrouter_key:
         try:
             init_summarizer(openrouter_key, ai_model)
-            print(f"Summarizer initialized with model: {ai_model or 'google/gemini-2.5-flash-preview'}")
+            print(f"Summarizer initialized with model: {ai_model or 'google/gemini-2.5-flash-preview:thinking'}")
         except Exception as e:
             print(f"WARNING: Summarizer init skipped ({e}). Summarization will be available later.")
 
