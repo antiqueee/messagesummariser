@@ -10,3 +10,4 @@ pydantic==2.5.3
 httpx>=0.25.0
 aiogram>=3.4.0
 python-socks[asyncio]>=2.0.0
+PySocks>=1.7.1
