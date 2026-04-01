@@ -9,19 +9,31 @@ from telethon.tl.types import User, Chat, Channel, Message, ForumTopic
 from telethon.tl.functions.channels import GetForumTopicsRequest
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 
+from .proxy_manager import get_proxy_manager, ProxyConfig
+
 SESSIONS_DIR = Path(__file__).parent.parent / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Connection errors that should trigger proxy switch
+CONNECTION_ERRORS = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 
 class TelegramClientManager:
     """Manager for multiple Telegram client sessions"""
 
-    def __init__(self, api_id: int, api_hash: str):
+    def __init__(self, api_id: int, api_hash: str, use_proxy: bool = True):
         self.api_id = api_id
         self.api_hash = api_hash
+        self.use_proxy = use_proxy
         self._clients: dict[int, TelegramClient] = {}
         self._pending_auth: dict[int, dict] = {}  # account_id -> {client, phone_code_hash}
         self._locks: dict[int, asyncio.Lock] = {}  # Lock per account to prevent concurrent access
+        self._proxy_initialized = False
 
     def _get_session_path(self, account_id: int) -> Path:
         return SESSIONS_DIR / f"account_{account_id}"
@@ -32,8 +44,36 @@ class TelegramClientManager:
             self._locks[account_id] = asyncio.Lock()
         return self._locks[account_id]
 
-    async def get_client(self, account_id: int) -> Optional[TelegramClient]:
-        """Get or create a client for the given account"""
+    async def _ensure_proxy_initialized(self):
+        """Initialize proxy manager and find best proxy on first use"""
+        if not self.use_proxy or self._proxy_initialized:
+            return
+
+        pm = get_proxy_manager()
+        proxy = await pm.get_best_proxy()
+        if proxy:
+            print(f"[TelegramClient] Using proxy: {proxy}", flush=True)
+        else:
+            print("[TelegramClient] No working proxy found, connecting directly", flush=True)
+        self._proxy_initialized = True
+
+    def _create_client(self, session_path: str, proxy: Optional[ProxyConfig] = None) -> TelegramClient:
+        """Create a TelegramClient with optional proxy configuration"""
+        kwargs = {
+            'session': session_path,
+            'api_id': self.api_id,
+            'api_hash': self.api_hash,
+        }
+
+        if proxy:
+            pm = get_proxy_manager()
+            proxy_args = pm.get_telethon_proxy_args(proxy)
+            kwargs.update(proxy_args)
+
+        return TelegramClient(**kwargs)
+
+    async def get_client(self, account_id: int, max_retries: int = 3) -> Optional[TelegramClient]:
+        """Get or create a client for the given account with automatic proxy failover"""
         # Quick check without lock
         if account_id in self._clients:
             client = self._clients[account_id]
@@ -52,49 +92,108 @@ class TelegramClientManager:
             if not session_path.with_suffix('.session').exists():
                 return None
 
-            client = TelegramClient(
-                str(session_path),
-                self.api_id,
-                self.api_hash
-            )
-            await client.connect()
+            # Initialize proxy on first connection attempt
+            if self.use_proxy:
+                await self._ensure_proxy_initialized()
 
-            if await client.is_user_authorized():
-                self._clients[account_id] = client
-                return client
+            pm = get_proxy_manager() if self.use_proxy else None
+            last_error = None
 
+            for attempt in range(max_retries):
+                proxy = pm.current_proxy if pm else None
+
+                try:
+                    client = self._create_client(str(session_path), proxy)
+                    await asyncio.wait_for(client.connect(), timeout=30)
+
+                    if await client.is_user_authorized():
+                        self._clients[account_id] = client
+                        return client
+                    return None
+
+                except CONNECTION_ERRORS as e:
+                    last_error = e
+                    print(f"[TelegramClient] Connection failed (attempt {attempt + 1}/{max_retries}): {e}", flush=True)
+
+                    if client:
+                        try:
+                            await client.disconnect()
+                        except:
+                            pass
+
+                    # Try next proxy
+                    if pm:
+                        next_proxy = await pm.get_next_proxy()
+                        if next_proxy:
+                            print(f"[TelegramClient] Switching to proxy: {next_proxy}", flush=True)
+                        else:
+                            print("[TelegramClient] No more proxies available", flush=True)
+                            break
+
+            if last_error:
+                print(f"[TelegramClient] All connection attempts failed: {last_error}", flush=True)
             return None
 
-    async def start_auth(self, account_id: int, phone: str) -> dict:
-        """Start authentication process for a new account"""
+    async def start_auth(self, account_id: int, phone: str, max_retries: int = 3) -> dict:
+        """Start authentication process for a new account with proxy support"""
         async with self._get_lock(account_id):
             session_path = self._get_session_path(account_id)
             print(f"[Auth] Starting auth for account {account_id}, phone: {phone}")
 
-            client = TelegramClient(
-                str(session_path),
-                self.api_id,
-                self.api_hash
-            )
-            await client.connect()
-            print(f"[Auth] Connected to Telegram")
+            # Initialize proxy on first connection attempt
+            if self.use_proxy:
+                await self._ensure_proxy_initialized()
 
-            try:
-                result = await client.send_code_request(phone)
-                print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
-            except Exception as e:
-                print(f"[Auth] ERROR sending code: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
+            pm = get_proxy_manager() if self.use_proxy else None
+            last_error = None
 
-            self._pending_auth[account_id] = {
-                'client': client,
-                'phone': phone,
-                'phone_code_hash': result.phone_code_hash
-            }
+            for attempt in range(max_retries):
+                proxy = pm.current_proxy if pm else None
+                client = None
 
-            return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
+                try:
+                    client = self._create_client(str(session_path), proxy)
+                    await asyncio.wait_for(client.connect(), timeout=30)
+                    print(f"[Auth] Connected to Telegram" + (f" via {proxy}" if proxy else ""))
+
+                    result = await client.send_code_request(phone)
+                    print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
+
+                    self._pending_auth[account_id] = {
+                        'client': client,
+                        'phone': phone,
+                        'phone_code_hash': result.phone_code_hash
+                    }
+
+                    return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
+
+                except CONNECTION_ERRORS as e:
+                    last_error = e
+                    print(f"[Auth] Connection failed (attempt {attempt + 1}/{max_retries}): {e}", flush=True)
+
+                    if client:
+                        try:
+                            await client.disconnect()
+                        except:
+                            pass
+
+                    # Try next proxy
+                    if pm:
+                        next_proxy = await pm.get_next_proxy()
+                        if next_proxy:
+                            print(f"[Auth] Switching to proxy: {next_proxy}", flush=True)
+                        else:
+                            print("[Auth] No more proxies available", flush=True)
+                            break
+
+                except Exception as e:
+                    print(f"[Auth] ERROR sending code: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
+
+            # All attempts failed
+            raise ConnectionError(f"Failed to connect after {max_retries} attempts: {last_error}")
 
     async def complete_auth(self, account_id: int, code: str,
                             password: Optional[str] = None) -> dict:
@@ -350,9 +449,9 @@ class TelegramClientManager:
 telegram_manager: Optional[TelegramClientManager] = None
 
 
-def init_telegram_manager(api_id: int, api_hash: str):
+def init_telegram_manager(api_id: int, api_hash: str, use_proxy: bool = True):
     global telegram_manager
-    telegram_manager = TelegramClientManager(api_id, api_hash)
+    telegram_manager = TelegramClientManager(api_id, api_hash, use_proxy)
     return telegram_manager
 
 
