@@ -121,7 +121,8 @@ class ProxyManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
             working = [p for p in self.proxies if p.is_working]
-            working.sort(key=lambda p: p.latency or float('inf'))
+            # Prefer MTProto proxies over SOCKS5 — TCP check doesn't verify SOCKS5 works for Telegram
+            working.sort(key=lambda p: (0 if p.type == 'mtproto' else 1, p.latency or float('inf')))
 
             print(f"[ProxyManager] Found {len(working)} working proxies", flush=True)
             if working:
@@ -162,7 +163,7 @@ class ProxyManager:
         # Get next working proxy without full recheck
         working = [p for p in self.proxies if p.is_working]
         if working:
-            working.sort(key=lambda p: p.latency or float('inf'))
+            working.sort(key=lambda p: (0 if p.type == 'mtproto' else 1, p.latency or float('inf')))
             self._current_proxy = working[0]
             print(f"[ProxyManager] Switching to {self._current_proxy}", flush=True)
             return self._current_proxy
