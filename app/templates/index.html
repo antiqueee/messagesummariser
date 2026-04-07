@@ -778,8 +778,12 @@
             if (data) options.body = JSON.stringify(data);
             const response = await fetch(url, options);
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'API Error');
+                let detail = 'Server error ' + response.status;
+                try {
+                    const error = await response.json();
+                    detail = error.detail || detail;
+                } catch (_) {}
+                throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
             }
             return response.json();
         }

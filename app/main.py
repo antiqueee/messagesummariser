@@ -402,13 +402,17 @@ async def generate_report(data: GenerateReportRequest):
                     pass
 
             # Get messages from Telegram
-            messages = await tm.get_messages(
-                account_id=chat['account_id'],
-                chat_telegram_id=chat['telegram_id'],
-                start_date=data.start_date,
-                end_date=data.end_date,
-                topic_ids=topic_ids
-            )
+            try:
+                messages = await tm.get_messages(
+                    account_id=chat['account_id'],
+                    chat_telegram_id=chat['telegram_id'],
+                    start_date=data.start_date,
+                    end_date=data.end_date,
+                    topic_ids=topic_ids
+                )
+            except Exception as e:
+                print(f"[Report] Failed to get messages for chat {chat['telegram_id']}: {e}", flush=True)
+                messages = []
 
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
