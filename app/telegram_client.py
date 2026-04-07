@@ -87,6 +87,12 @@ class TelegramClientManager:
                 client = self._clients[account_id]
                 if client.is_connected():
                     return client
+                # Client exists but disconnected — close it properly to release SQLite lock
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                del self._clients[account_id]
 
             session_path = self._get_session_path(account_id)
             if not session_path.with_suffix('.session').exists():
