@@ -110,7 +110,7 @@ class ProxyManager:
             proxy.last_check = time.time()
             return False
 
-    async def check_all_proxies(self, timeout: float = 5.0) -> list[ProxyConfig]:
+    async def check_all_proxies(self, timeout: float = 2.0) -> list[ProxyConfig]:
         """
         Check all proxies in parallel and return working ones sorted by latency.
         """
@@ -172,6 +172,19 @@ class ProxyManager:
         print("[ProxyManager] No known working proxies, rechecking all...", flush=True)
         return await self.get_best_proxy(force_recheck=True)
 
+    def _decode_secret(self, secret: str) -> str:
+        """Convert proxy secret to hex format expected by Telethon.
+        Secrets can be hex or base64url-encoded (fake-TLS format starting with '7').
+        """
+        try:
+            bytes.fromhex(secret)
+            return secret  # Already valid hex
+        except ValueError:
+            import base64
+            # Add padding and decode from base64url
+            decoded = base64.urlsafe_b64decode(secret + '==')
+            return decoded.hex()
+
     def get_telethon_proxy_args(self, proxy: ProxyConfig) -> dict:
         """
         Convert ProxyConfig to Telethon client arguments.
@@ -181,7 +194,7 @@ class ProxyManager:
             from telethon.network import connection
             return {
                 'connection': connection.ConnectionTcpMTProxyRandomizedIntermediate,
-                'proxy': (proxy.host, proxy.port, proxy.secret)
+                'proxy': (proxy.host, proxy.port, self._decode_secret(proxy.secret))
             }
         else:  # socks5
             import socks
