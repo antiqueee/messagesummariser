@@ -342,13 +342,24 @@ class TelegramClientManager:
             end_date: datetime,
             limit: int = 10000,
             topic_ids: list[int] = None,
-            timeout_seconds: int = 60
+            timeout_seconds: int = 180
     ) -> list[dict]:
         """Get messages from a chat within a date range, optionally filtered by topic IDs"""
         client = await self.get_client(account_id)
         if not client:
             print(f"[get_messages] No client for account {account_id}")
             return []
+
+        # Ensure client is still connected before fetching (proxy may have dropped)
+        if not client.is_connected():
+            print(f"[get_messages] Client disconnected, reconnecting...", flush=True)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=30)
+            except Exception as e:
+                print(f"[get_messages] Reconnect failed: {e}", flush=True)
+                # Remove stale client so next call recreates it
+                self._clients.pop(account_id, None)
+                return []
 
         # Strip timezone info for consistent comparison
         start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
