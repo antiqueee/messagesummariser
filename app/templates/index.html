@@ -50,6 +50,87 @@
             font-size: 13px;
         }
 
+        .proxy-widget {
+            position: relative;
+            font-size: 12px;
+        }
+
+        .proxy-toggle {
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .proxy-toggle:hover { background: rgba(255,255,255,0.25); }
+
+        .proxy-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .proxy-dot.green { background: #4caf50; }
+        .proxy-dot.red { background: #f44336; }
+        .proxy-dot.gray { background: #aaa; }
+
+        .proxy-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 6px);
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            min-width: 320px;
+            z-index: 1000;
+            overflow: hidden;
+        }
+
+        .proxy-dropdown.open { display: block; }
+
+        .proxy-dropdown-header {
+            padding: 10px 14px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .proxy-list { max-height: 280px; overflow-y: auto; }
+
+        .proxy-item {
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: #333;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .proxy-item:hover { background: #f9f9f9; }
+        .proxy-item.active { background: #fff3e0; font-weight: 600; }
+
+        .proxy-item-label { flex: 1; font-size: 12px; }
+
+        .proxy-ping {
+            font-size: 11px;
+            color: #666;
+            white-space: nowrap;
+        }
+        .proxy-ping.fast { color: #4caf50; }
+        .proxy-ping.slow { color: #ff9800; }
+
         .tabs {
             display: flex;
             gap: 10px;
@@ -460,7 +541,22 @@
                 <h1>AI-агент охранки</h1>
                 <p>Мониторинг и суммаризация чатов строительных объектов</p>
             </div>
-            <span class="author">by Антон Антоненко</span>
+            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+                <span class="author">by Антон Антоненко</span>
+                <div class="proxy-widget" id="proxy-widget">
+                    <button class="proxy-toggle" onclick="toggleProxyDropdown()">
+                        <span class="proxy-dot gray" id="proxy-dot"></span>
+                        <span id="proxy-label">Прокси...</span>
+                    </button>
+                    <div class="proxy-dropdown" id="proxy-dropdown">
+                        <div class="proxy-dropdown-header">
+                            <span>Прокси</span>
+                            <button class="btn btn-small btn-secondary" onclick="recheckProxies()" id="recheck-btn">Перепроверить</button>
+                        </div>
+                        <div class="proxy-list" id="proxy-list"></div>
+                    </div>
+                </div>
+            </div>
         </header>
 
         <div class="tabs">
@@ -768,6 +864,75 @@
             document.getElementById('complex-name').value = '';
             showModal('add-complex-modal');
         }
+
+        // ===== Proxy Widget =====
+        async function loadProxies() {
+            try {
+                const data = await api('/api/proxies');
+                renderProxyWidget(data);
+            } catch (e) {
+                document.getElementById('proxy-label').textContent = 'Нет данных';
+            }
+        }
+
+        function renderProxyWidget(data) {
+            const dot = document.getElementById('proxy-dot');
+            const label = document.getElementById('proxy-label');
+            const list = document.getElementById('proxy-list');
+
+            const current = data.proxies.find(p => p.is_current);
+            if (current) {
+                dot.className = 'proxy-dot ' + (current.is_working ? 'green' : 'red');
+                const ping = current.latency_ms != null ? ` — ${current.latency_ms}ms` : '';
+                label.textContent = current.label + ping;
+            } else {
+                dot.className = 'proxy-dot gray';
+                label.textContent = 'Нет прокси';
+            }
+
+            list.innerHTML = data.proxies.map(p => {
+                const pingText = p.latency_ms != null ? `${p.latency_ms}ms` : (p.is_working === false ? 'недост.' : '?');
+                const pingClass = p.latency_ms != null ? (p.latency_ms < 100 ? 'fast' : 'slow') : '';
+                const dotColor = p.is_working === true ? 'green' : (p.is_working === false ? 'red' : 'gray');
+                return `<div class="proxy-item${p.is_current ? ' active' : ''}" onclick="selectProxy(${p.index})">
+                    <span class="proxy-dot ${dotColor}"></span>
+                    <span class="proxy-item-label">${p.label}</span>
+                    <span class="proxy-ping ${pingClass}">${pingText}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function toggleProxyDropdown() {
+            document.getElementById('proxy-dropdown').classList.toggle('open');
+        }
+
+        document.addEventListener('click', function(e) {
+            if (!document.getElementById('proxy-widget').contains(e.target)) {
+                document.getElementById('proxy-dropdown').classList.remove('open');
+            }
+        });
+
+        async function recheckProxies() {
+            const btn = document.getElementById('recheck-btn');
+            btn.textContent = 'Проверяю...';
+            btn.disabled = true;
+            try {
+                const data = await api('/api/proxies/recheck', 'POST');
+                renderProxyWidget(data);
+            } catch(e) {}
+            btn.textContent = 'Перепроверить';
+            btn.disabled = false;
+        }
+
+        async function selectProxy(index) {
+            try {
+                await api('/api/proxies/select', 'POST', { index });
+                document.getElementById('proxy-dropdown').classList.remove('open');
+                await loadProxies();
+            } catch(e) { alert('Ошибка: ' + e.message); }
+        }
+
+        loadProxies();
 
         // API calls
         async function api(url, method = 'GET', data = null) {

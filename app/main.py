@@ -597,6 +597,79 @@ async def reset_negativists_rules():
     return {"rules": default_rules, "message": "Rules reset to default"}
 
 
+# ============== Proxy Management ==============
+
+@app.get("/api/proxies")
+async def get_proxies():
+    """Get all proxies with their current status and latency"""
+    from .proxy_manager import get_proxy_manager
+    pm = get_proxy_manager()
+    proxies = []
+    for i, p in enumerate(pm.proxies):
+        proxies.append({
+            'index': i,
+            'type': p.type,
+            'host': p.host,
+            'port': p.port,
+            'latency_ms': round(p.latency * 1000) if p.latency else None,
+            'is_working': p.is_working,
+            'is_current': p is pm.current_proxy,
+            'label': str(p)
+        })
+    return {
+        'proxies': proxies,
+        'current': str(pm.current_proxy) if pm.current_proxy else None
+    }
+
+
+@app.post("/api/proxies/recheck")
+async def recheck_proxies():
+    """Force recheck all proxies and return updated list"""
+    from .proxy_manager import get_proxy_manager
+    pm = get_proxy_manager()
+    await pm.check_all_proxies()
+    proxies = []
+    for i, p in enumerate(pm.proxies):
+        proxies.append({
+            'index': i,
+            'type': p.type,
+            'host': p.host,
+            'port': p.port,
+            'latency_ms': round(p.latency * 1000) if p.latency else None,
+            'is_working': p.is_working,
+            'is_current': p is pm.current_proxy,
+            'label': str(p)
+        })
+    return {
+        'proxies': proxies,
+        'current': str(pm.current_proxy) if pm.current_proxy else None
+    }
+
+
+@app.post("/api/proxies/select")
+async def select_proxy(data: dict):
+    """Manually select a proxy by index"""
+    from .proxy_manager import get_proxy_manager
+    pm = get_proxy_manager()
+    index = data.get('index')
+    if index is None or index < 0 or index >= len(pm.proxies):
+        raise HTTPException(status_code=400, detail="Invalid proxy index")
+    pm._current_proxy = pm.proxies[index]
+    # Also reset clients so they reconnect with new proxy
+    try:
+        tm = get_telegram_manager()
+        for client in list(tm._clients.values()):
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+        tm._clients.clear()
+        tm._proxy_initialized = False
+    except RuntimeError:
+        pass
+    return {'current': str(pm._current_proxy)}
+
+
 # ============== Health Check ==============
 
 @app.get("/api/health")
