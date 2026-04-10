@@ -44,6 +44,7 @@ def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     return sorted(chats, key=lambda c: extract_building_number(c.get('custom_name') or c.get('original_title') or ''))
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .max_client import init_max_manager, get_max_manager
+from .proxy_manager import get_proxy_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
 from .bot import start_bot, stop_bot
 from .models import (
@@ -715,6 +716,51 @@ async def get_max_account_chats(account_id: int):
     chats = await db.get_chats()
     max_chats = [c for c in chats if c.get('source') == 'max' and c.get('max_account_id') == account_id]
     return {"chats": max_chats}
+
+
+# ============== Proxy Management ==============
+
+@app.get("/api/proxies")
+async def get_proxies():
+    """Get list of all proxies with their status"""
+    pm = get_proxy_manager()
+    proxies = []
+    for i, proxy in enumerate(pm.proxies):
+        proxies.append({
+            'index': i,
+            'type': proxy.type,
+            'host': proxy.host,
+            'port': proxy.port,
+            'is_working': proxy.is_working,
+            'latency': round(proxy.latency, 3) if proxy.latency else None,
+            'is_current': proxy is pm.current_proxy
+        })
+    return {
+        'proxies': proxies,
+        'current_index': next((i for i, p in enumerate(pm.proxies) if p is pm.current_proxy), None)
+    }
+
+
+@app.post("/api/proxies/recheck")
+async def recheck_proxies():
+    """Recheck all proxies and find the best one"""
+    pm = get_proxy_manager()
+    best = await pm.get_best_proxy(force_recheck=True)
+    return {
+        'message': f'Проверено {len(pm.proxies)} прокси',
+        'best': str(best) if best else None
+    }
+
+
+@app.post("/api/proxies/{index}/select")
+async def select_proxy(index: int):
+    """Manually select a specific proxy"""
+    pm = get_proxy_manager()
+    if index < 0 or index >= len(pm.proxies):
+        raise HTTPException(status_code=404, detail="Proxy not found")
+    proxy = pm.proxies[index]
+    pm._current_proxy = proxy
+    return {'message': f'Выбран прокси: {proxy}', 'proxy': str(proxy)}
 
 
 # ============== Health Check ==============

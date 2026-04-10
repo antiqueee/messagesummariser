@@ -487,6 +487,13 @@
                 </h2>
                 <div id="max-accounts-list"></div>
             </div>
+            <div class="section">
+                <h2 class="section-title">
+                    Прокси для Telegram
+                    <button class="btn btn-secondary btn-small" onclick="recheckProxies()">Перепроверить все</button>
+                </h2>
+                <div id="proxy-list" style="font-size: 13px;"></div>
+            </div>
         </div>
 
         <!-- Complexes Panel -->
@@ -783,7 +790,7 @@
                 document.getElementById(btn.dataset.tab + '-panel').classList.add('active');
 
                 // Load data for the tab
-                if (btn.dataset.tab === 'accounts') { loadAccounts(); loadMaxAccounts(); }
+                if (btn.dataset.tab === 'accounts') { loadAccounts(); loadMaxAccounts(); loadProxies(); }
                 if (btn.dataset.tab === 'complexes') loadComplexes();
                 if (btn.dataset.tab === 'chats') {
                     loadAccountsForFilter();
@@ -1049,6 +1056,57 @@
                 closeModal('add-max-chat-modal');
                 alert('Чат Max добавлен! Перейдите во вкладку "Чаты" для настройки.');
                 loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // =================== Proxies ===================
+        async function loadProxies() {
+            const container = document.getElementById('proxy-list');
+            try {
+                const data = await api('/api/proxies');
+                if (data.proxies.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет прокси</div>';
+                    return;
+                }
+                container.innerHTML = data.proxies.map(p => {
+                    const statusIcon = p.is_current ? '[ ACTIVE ]' : (p.is_working === true ? 'OK' : (p.is_working === false ? 'FAIL' : '?'));
+                    const statusColor = p.is_current ? '#2ecc71; font-weight:bold' : (p.is_working === true ? '#2ecc71' : (p.is_working === false ? '#e74c3c' : '#999'));
+                    const latency = p.latency ? `${(p.latency * 1000).toFixed(0)}ms` : '-';
+                    return `
+                        <div style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #f0f0f0; ${p.is_current ? 'background: #e8f5e9;' : ''}">
+                            <span style="color: ${statusColor}; min-width: 60px; font-size: 12px;">${statusIcon}</span>
+                            <span style="min-width: 60px; color: #888; font-size: 12px;">${p.type.toUpperCase()}</span>
+                            <span style="flex: 1;">${p.host}:${p.port}</span>
+                            <span style="color: #888; min-width: 50px; text-align: right;">${latency}</span>
+                            ${!p.is_current ? `<button class="btn btn-small" style="font-size: 11px; padding: 2px 8px;" onclick="selectProxy(${p.index})">Выбрать</button>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        async function recheckProxies() {
+            const container = document.getElementById('proxy-list');
+            container.innerHTML = '<p style="color: #888;">Проверка прокси... Это может занять 30-60 секунд.</p>';
+            try {
+                const result = await api('/api/proxies/recheck', 'POST');
+                alert(result.message + (result.best ? `\nЛучший: ${result.best}` : '\nРабочих прокси не найдено'));
+                loadProxies();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+                loadProxies();
+            }
+        }
+
+        async function selectProxy(index) {
+            try {
+                const result = await api(`/api/proxies/${index}/select`, 'POST');
+                alert(result.message);
+                loadProxies();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -1843,6 +1901,7 @@
         // Initial load
         loadAccounts();
         loadMaxAccounts();
+        loadProxies();
     </script>
 </body>
 </html>
