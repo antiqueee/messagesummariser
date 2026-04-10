@@ -29,21 +29,19 @@ class MaxClientManager:
         """Start Max authentication (phone-based, sends SMS code)"""
         async with self._get_lock(account_id):
             try:
-                from pymax import MaxClient
+                from pymax import SocketMaxClient
                 from pymax.payloads import UserAgentPayload
 
                 ua = UserAgentPayload(device_type="DESKTOP", app_version="25.12.13")
-                client = MaxClient(
+                client = SocketMaxClient(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
                 )
 
-                # Start the client - this triggers phone auth (SMS code)
-                # We store the client for later use
                 self._clients[account_id] = client
 
-                return {'status': 'code_required', 'message': 'SMS code sent to phone'}
+                return {'status': 'code_required', 'message': 'Подтвердите вход в приложении Max'}
 
             except ImportError as ie:
                 raise RuntimeError(
@@ -58,11 +56,11 @@ class MaxClientManager:
         """Connect an already authenticated Max client"""
         async with self._get_lock(account_id):
             try:
-                from pymax import MaxClient
+                from pymax import SocketMaxClient
                 from pymax.payloads import UserAgentPayload
 
                 ua = UserAgentPayload(device_type="DESKTOP", app_version="25.12.13")
-                client = MaxClient(
+                client = SocketMaxClient(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
