@@ -43,12 +43,13 @@ def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     """Sort chats: buildings first (by number), then general chats"""
     return sorted(chats, key=lambda c: extract_building_number(c.get('custom_name') or c.get('original_title') or ''))
 from .telegram_client import init_telegram_manager, get_telegram_manager
+from .max_client import init_max_manager, get_max_manager
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
 from .bot import start_bot, stop_bot
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
-    AnalyzeNegativistsRequest
+    AnalyzeNegativistsRequest, MaxAccountCreateRequest, MaxChatAddRequest
 )
 
 load_dotenv()
@@ -66,6 +67,10 @@ async def lifespan(app: FastAPI):
 
     if api_id and api_hash:
         init_telegram_manager(int(api_id), api_hash)
+
+    # Initialize Max messenger manager
+    init_max_manager()
+    print("[Max] Max messenger manager initialized")
 
     if openrouter_key:
         try:
@@ -115,6 +120,11 @@ async def lifespan(app: FastAPI):
     try:
         tm = get_telegram_manager()
         await tm.close_all()
+    except RuntimeError:
+        pass
+    try:
+        mm = get_max_manager()
+        await mm.close_all()
     except RuntimeError:
         pass
 
@@ -401,14 +411,27 @@ async def generate_report(data: GenerateReportRequest):
                 except:
                     pass
 
-            # Get messages from Telegram
-            messages = await tm.get_messages(
-                account_id=chat['account_id'],
-                chat_telegram_id=chat['telegram_id'],
-                start_date=data.start_date,
-                end_date=data.end_date,
-                topic_ids=topic_ids
-            )
+            # Get messages from appropriate source
+            source = chat.get('source', 'telegram')
+            if source == 'max':
+                try:
+                    mm = get_max_manager()
+                    messages = await mm.get_messages(
+                        account_id=chat['max_account_id'],
+                        chat_id=chat['telegram_id'],
+                        start_date=data.start_date,
+                        end_date=data.end_date,
+                    )
+                except RuntimeError:
+                    messages = []
+            else:
+                messages = await tm.get_messages(
+                    account_id=chat['account_id'],
+                    chat_telegram_id=chat['telegram_id'],
+                    start_date=data.start_date,
+                    end_date=data.end_date,
+                    topic_ids=topic_ids
+                )
 
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
@@ -524,14 +547,27 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             except:
                 pass
 
-        # Get messages from Telegram
-        messages = await tm.get_messages(
-            account_id=chat['account_id'],
-            chat_telegram_id=chat['telegram_id'],
-            start_date=data.start_date,
-            end_date=data.end_date,
-            topic_ids=topic_ids
-        )
+        # Get messages from appropriate source
+        source = chat.get('source', 'telegram')
+        if source == 'max':
+            try:
+                mm = get_max_manager()
+                messages = await mm.get_messages(
+                    account_id=chat['max_account_id'],
+                    chat_id=chat['telegram_id'],
+                    start_date=data.start_date,
+                    end_date=data.end_date,
+                )
+            except RuntimeError:
+                messages = []
+        else:
+            messages = await tm.get_messages(
+                account_id=chat['account_id'],
+                chat_telegram_id=chat['telegram_id'],
+                start_date=data.start_date,
+                end_date=data.end_date,
+                topic_ids=topic_ids
+            )
 
         chat_name = chat['custom_name'] or chat['original_title']
         content_filter = chat.get('content_filter', '')
@@ -593,6 +629,94 @@ async def reset_negativists_rules():
     return {"rules": default_rules, "message": "Rules reset to default"}
 
 
+# ============== Max Messenger Endpoints ==============
+
+@app.get("/api/max/accounts")
+async def get_max_accounts():
+    """Get all Max messenger accounts"""
+    accounts = await db.get_max_accounts()
+    return {"accounts": accounts}
+
+
+@app.post("/api/max/accounts")
+async def create_max_account(data: MaxAccountCreateRequest):
+    """Create a new Max messenger account"""
+    account_id = await db.create_max_account(data.phone, data.name)
+    return {"id": account_id, "message": "Max account created"}
+
+
+@app.delete("/api/max/accounts/{account_id}")
+async def delete_max_account(account_id: int):
+    """Delete a Max messenger account"""
+    try:
+        mm = get_max_manager()
+        await mm.disconnect_account(account_id)
+    except RuntimeError:
+        pass
+    await db.delete_max_account(account_id)
+    return {"message": "Max account deleted"}
+
+
+@app.post("/api/max/accounts/{account_id}/auth/start")
+async def start_max_auth(account_id: int):
+    """Start Max messenger authentication"""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    try:
+        mm = get_max_manager()
+        result = await mm.start_auth(account_id, account['phone'])
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/max/accounts/{account_id}/auth/confirm")
+async def confirm_max_auth(account_id: int):
+    """Confirm Max authentication (after user enters code in Max app)"""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    try:
+        mm = get_max_manager()
+        connected = await mm.connect_client(account_id, account['phone'])
+        if connected:
+            await db.update_max_account_authorized(account_id, True)
+            return {"status": "success", "message": "Max account authorized"}
+        return {"status": "error", "message": "Failed to connect"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/max/accounts/{account_id}/chats")
+async def add_max_chat(account_id: int, data: MaxChatAddRequest):
+    """Manually add a Max chat to monitor"""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    chat_id = await db.upsert_max_chat(
+        max_chat_id=data.max_chat_id,
+        max_account_id=account_id,
+        original_title=data.title
+    )
+    return {"id": chat_id, "message": "Max chat added"}
+
+
+@app.get("/api/max/accounts/{account_id}/chats")
+async def get_max_account_chats(account_id: int):
+    """Get chats associated with a Max account"""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    chats = await db.get_chats()
+    max_chats = [c for c in chats if c.get('source') == 'max' and c.get('max_account_id') == account_id]
+    return {"chats": max_chats}
+
+
 # ============== Health Check ==============
 
 @app.get("/api/health")
@@ -601,12 +725,19 @@ async def health_check():
     status = {
         'status': 'ok',
         'telegram_configured': False,
+        'max_configured': False,
         'summarizer_configured': False
     }
 
     try:
         get_telegram_manager()
         status['telegram_configured'] = True
+    except RuntimeError:
+        pass
+
+    try:
+        get_max_manager()
+        status['max_configured'] = True
     except RuntimeError:
         pass
 

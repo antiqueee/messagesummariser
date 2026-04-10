@@ -480,6 +480,13 @@
                 </h2>
                 <div id="accounts-list"></div>
             </div>
+            <div class="section">
+                <h2 class="section-title">
+                    Max аккаунты
+                    <button class="btn btn-primary btn-small" onclick="showAddMaxAccountModal()">+ Добавить</button>
+                </h2>
+                <div id="max-accounts-list"></div>
+            </div>
         </div>
 
         <!-- Complexes Panel -->
@@ -657,6 +664,45 @@
         </div>
     </div>
 
+    <!-- Add Max Account Modal -->
+    <div id="add-max-account-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Добавить Max аккаунт</h3>
+            <div class="form-group">
+                <label>Название (для себя):</label>
+                <input type="text" id="max-account-name" placeholder="Например: Max основной">
+            </div>
+            <div class="form-group">
+                <label>Номер телефона:</label>
+                <input type="tel" id="max-account-phone" placeholder="+7XXXXXXXXXX">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="createMaxAccount()">Добавить</button>
+                <button class="btn btn-secondary" onclick="closeModal('add-max-account-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Max Chat Modal -->
+    <div id="add-max-chat-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Добавить чат Max</h3>
+            <input type="hidden" id="max-chat-account-id">
+            <div class="form-group">
+                <label>ID чата в Max:</label>
+                <input type="number" id="max-chat-id" placeholder="Числовой ID чата">
+            </div>
+            <div class="form-group">
+                <label>Название чата:</label>
+                <input type="text" id="max-chat-title" placeholder="Название для отображения">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="addMaxChat()">Добавить</button>
+                <button class="btn btn-secondary" onclick="closeModal('add-max-chat-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Add Complex Modal -->
     <div id="add-complex-modal" class="modal">
         <div class="modal-content">
@@ -737,7 +783,7 @@
                 document.getElementById(btn.dataset.tab + '-panel').classList.add('active');
 
                 // Load data for the tab
-                if (btn.dataset.tab === 'accounts') loadAccounts();
+                if (btn.dataset.tab === 'accounts') { loadAccounts(); loadMaxAccounts(); }
                 if (btn.dataset.tab === 'complexes') loadComplexes();
                 if (btn.dataset.tab === 'chats') {
                     loadAccountsForFilter();
@@ -897,6 +943,117 @@
             }
         }
 
+        // =================== Max Accounts ===================
+        async function loadMaxAccounts() {
+            const container = document.getElementById('max-accounts-list');
+            try {
+                const data = await api('/api/max/accounts');
+                if (data.accounts.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет добавленных Max аккаунтов</div>';
+                    return;
+                }
+                container.innerHTML = data.accounts.map(acc => `
+                    <div class="card" style="padding: 10px 15px;">
+                        <div style="display: grid; grid-template-columns: 250px 150px 1fr auto; align-items: center; gap: 10px;">
+                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
+                            <div style="color: #666; font-size: 13px;">${acc.phone}</div>
+                            <div></div>
+                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                                ${!acc.is_authorized
+                                    ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
+                                    : `<button class="btn btn-success btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Чат</button>`}
+                                <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
+                                ${acc.is_authorized
+                                    ? '<span class="badge badge-success">Авторизован</span>'
+                                    : '<span class="badge badge-warning">Не авторизован</span>'}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        function showAddMaxAccountModal() {
+            document.getElementById('max-account-name').value = '';
+            document.getElementById('max-account-phone').value = '';
+            showModal('add-max-account-modal');
+        }
+
+        async function createMaxAccount() {
+            const name = document.getElementById('max-account-name').value;
+            const phone = document.getElementById('max-account-phone').value;
+            if (!name || !phone) {
+                alert('Заполните все поля');
+                return;
+            }
+            try {
+                await api('/api/max/accounts', 'POST', { name, phone });
+                closeModal('add-max-account-modal');
+                loadMaxAccounts();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteMaxAccount(id) {
+            if (!confirm('Удалить Max аккаунт?')) return;
+            try {
+                await api(`/api/max/accounts/${id}`, 'DELETE');
+                loadMaxAccounts();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function startMaxAuth(accountId) {
+            try {
+                const result = await api(`/api/max/accounts/${accountId}/auth/start`, 'POST');
+                alert('Авторизация запущена. Подтвердите вход в приложении Max, затем нажмите "Подтвердить".');
+                // After user confirms in Max app, confirm auth
+                if (confirm('Вы подтвердили вход в Max? Нажмите OK для завершения авторизации.')) {
+                    const confirmResult = await api(`/api/max/accounts/${accountId}/auth/confirm`, 'POST');
+                    if (confirmResult.status === 'success') {
+                        alert('Авторизация Max успешна!');
+                        loadMaxAccounts();
+                    } else {
+                        alert('Ошибка: ' + (confirmResult.message || 'Не удалось подключиться'));
+                    }
+                }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        function showAddMaxChatModal(accountId) {
+            document.getElementById('max-chat-account-id').value = accountId;
+            document.getElementById('max-chat-id').value = '';
+            document.getElementById('max-chat-title').value = '';
+            showModal('add-max-chat-modal');
+        }
+
+        async function addMaxChat() {
+            const accountId = document.getElementById('max-chat-account-id').value;
+            const chatId = document.getElementById('max-chat-id').value;
+            const title = document.getElementById('max-chat-title').value;
+            if (!chatId || !title) {
+                alert('Заполните все поля');
+                return;
+            }
+            try {
+                await api(`/api/max/accounts/${accountId}/chats`, 'POST', {
+                    max_chat_id: parseInt(chatId),
+                    title: title
+                });
+                closeModal('add-max-chat-modal');
+                alert('Чат Max добавлен! Перейдите во вкладку "Чаты" для настройки.');
+                loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
         // Service Messages
         let currentServiceMessagesAccountId = null;
 
@@ -1036,13 +1193,18 @@
                     container.innerHTML = '<div class="empty-state">Нет чатов. Синхронизируйте аккаунты.</div>';
                     return;
                 }
-                container.innerHTML = data.chats.map(chat => `
+                container.innerHTML = data.chats.map(chat => {
+                    const source = chat.source || 'telegram';
+                    const sourceBadge = source === 'max'
+                        ? '<span class="badge" style="background:#1976d2;color:white;">Max</span>'
+                        : '<span class="badge" style="background:#0088cc;color:white;">TG</span>';
+                    return `
                     <div class="chat-item ${chat.is_monitored ? 'monitored' : ''}">
                         <div class="chat-info">
-                            <div class="chat-title">${chat.custom_name || chat.original_title}</div>
+                            <div class="chat-title">${sourceBadge} ${chat.custom_name || chat.original_title}</div>
                             <div class="chat-meta">
                                 ${chat.custom_name ? `<span>Оригинал: ${chat.original_title}</span> | ` : ''}
-                                <span>Аккаунт: ${chat.account_name}</span>
+                                <span>Аккаунт: ${chat.account_name || 'N/A'}</span>
                                 ${chat.complex_name ? ` | <span class="badge badge-info">${chat.complex_name}</span>` : ''}
                             </div>
                         </div>
@@ -1053,7 +1215,7 @@
                             <button class="btn btn-primary btn-small" onclick="editChat(${chat.id})">Настроить</button>
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1680,6 +1842,7 @@
 
         // Initial load
         loadAccounts();
+        loadMaxAccounts();
     </script>
 </body>
 </html>

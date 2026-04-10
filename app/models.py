@@ -109,3 +109,14 @@ class AnalyzeNegativistsRequest(BaseModel):
     chat_ids: list[int]
     start_date: datetime
     end_date: datetime
+
+
+# Max messenger models
+class MaxAccountCreateRequest(BaseModel):
+    phone: str
+    name: str
+
+
+class MaxChatAddRequest(BaseModel):
+    max_chat_id: int
+    title: str

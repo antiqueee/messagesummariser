@@ -67,6 +67,29 @@ async def init_db():
         except:
             pass
 
+        # Max messenger accounts table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS max_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                is_authorized INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # Add source column to chats (telegram or max)
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN source TEXT DEFAULT 'telegram'")
+        except:
+            pass
+
+        # Add max_account_id column to chats
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN max_account_id INTEGER")
+        except:
+            pass
+
         # Settings table (for storing editable reglament etc)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -119,6 +142,49 @@ async def delete_account(account_id: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM chats WHERE account_id = ?", (account_id,))
         await db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        await db.commit()
+
+
+# Max account operations
+async def create_max_account(phone: str, name: str) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO max_accounts (phone, name, is_authorized, created_at) VALUES (?, ?, 0, ?)",
+            (phone, name, datetime.now().isoformat())
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_max_accounts() -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM max_accounts ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_max_account(account_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM max_accounts WHERE id = ?", (account_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_max_account_authorized(account_id: int, is_authorized: bool):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE max_accounts SET is_authorized = ? WHERE id = ?",
+            (1 if is_authorized else 0, account_id)
+        )
+        await db.commit()
+
+
+async def delete_max_account(account_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM chats WHERE max_account_id = ? AND source = 'max'", (account_id,))
+        await db.execute("DELETE FROM max_accounts WHERE id = ?", (account_id,))
         await db.commit()
 
 
@@ -199,10 +265,12 @@ async def get_chats(account_id: Optional[int] = None, complex_id: Optional[int] 
         db.row_factory = aiosqlite.Row
 
         query = """
-            SELECT c.*, cx.name as complex_name, a.name as account_name
+            SELECT c.*, cx.name as complex_name,
+                   COALESCE(a.name, ma.name) as account_name
             FROM chats c
             LEFT JOIN complexes cx ON c.complex_id = cx.id
-            LEFT JOIN accounts a ON c.account_id = a.id
+            LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
+            LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
             WHERE 1=1
         """
         params = []
@@ -229,10 +297,12 @@ async def get_chat(chat_id: int) -> Optional[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
-            SELECT c.*, cx.name as complex_name, a.name as account_name
+            SELECT c.*, cx.name as complex_name,
+                   COALESCE(a.name, ma.name) as account_name
             FROM chats c
             LEFT JOIN complexes cx ON c.complex_id = cx.id
-            LEFT JOIN accounts a ON c.account_id = a.id
+            LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
+            LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
             WHERE c.id = ?
         """, (chat_id,))
         row = await cursor.fetchone()
@@ -279,10 +349,12 @@ async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT c.*, cx.name as complex_name, cx.sort_order as complex_sort_order,
-                   a.name as account_name, a.phone as account_phone
+                   COALESCE(a.name, ma.name) as account_name,
+                   COALESCE(a.phone, ma.phone) as account_phone
             FROM chats c
             JOIN complexes cx ON c.complex_id = cx.id
-            JOIN accounts a ON c.account_id = a.id
+            LEFT JOIN accounts a ON c.account_id = a.id AND c.source = 'telegram'
+            LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
             WHERE c.is_monitored = 1 AND c.complex_id IS NOT NULL
             ORDER BY cx.sort_order, cx.name, c.original_title
         """)
@@ -297,6 +369,32 @@ async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
             result[cid].append(row_dict)
 
         return result
+
+
+async def upsert_max_chat(max_chat_id: int, max_account_id: int, original_title: str) -> int:
+    """Create or update a chat from Max messenger"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id FROM chats WHERE telegram_id = ? AND max_account_id = ? AND source = 'max'",
+            (max_chat_id, max_account_id)
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            await db.execute(
+                "UPDATE chats SET original_title = ? WHERE id = ?",
+                (original_title, existing[0])
+            )
+            await db.commit()
+            return existing[0]
+        else:
+            cursor = await db.execute(
+                """INSERT INTO chats (telegram_id, account_id, max_account_id, original_title, source, created_at)
+                   VALUES (?, 0, ?, ?, 'max', ?)""",
+                (max_chat_id, max_account_id, original_title, datetime.now().isoformat())
+            )
+            await db.commit()
+            return cursor.lastrowid
 
 
 # Settings operations
