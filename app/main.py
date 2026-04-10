@@ -660,7 +660,7 @@ async def delete_max_account(account_id: int):
 
 @app.post("/api/max/accounts/{account_id}/auth/start")
 async def start_max_auth(account_id: int):
-    """Start Max messenger authentication"""
+    """Start Max messenger authentication - launches client in background"""
     account = await db.get_max_account(account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Max account not found")
@@ -668,6 +668,11 @@ async def start_max_auth(account_id: int):
     try:
         mm = get_max_manager()
         result = await mm.start_auth(account_id, account['phone'])
+
+        # If connected immediately (cached session)
+        if result.get('status') == 'success':
+            await db.update_max_account_authorized(account_id, True)
+
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -675,18 +680,18 @@ async def start_max_auth(account_id: int):
 
 @app.post("/api/max/accounts/{account_id}/auth/confirm")
 async def confirm_max_auth(account_id: int):
-    """Confirm Max authentication (after user enters code in Max app)"""
+    """Check if Max client has connected after auth"""
     account = await db.get_max_account(account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Max account not found")
 
     try:
         mm = get_max_manager()
-        connected = await mm.connect_client(account_id, account['phone'])
+        connected = await mm.check_connected(account_id)
         if connected:
             await db.update_max_account_authorized(account_id, True)
-            return {"status": "success", "message": "Max account authorized"}
-        return {"status": "error", "message": "Failed to connect"}
+            return {"status": "success", "message": "Max аккаунт авторизован!"}
+        return {"status": "error", "message": "Клиент ещё не подключен. Проверьте терминал — возможно нужно ввести код."}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

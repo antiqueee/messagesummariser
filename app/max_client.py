@@ -12,8 +12,10 @@ class MaxClientManager:
     """Manager for Max messenger client sessions using maxapi-python (pymax)"""
 
     def __init__(self):
-        self._clients: dict[int, object] = {}  # account_id -> MaxClient
+        self._clients: dict[int, object] = {}  # account_id -> client
+        self._tasks: dict[int, asyncio.Task] = {}  # account_id -> background task
         self._locks: dict[int, asyncio.Lock] = {}
+        self._ready: dict[int, asyncio.Event] = {}  # signals when client is connected
 
     def _get_lock(self, account_id: int) -> asyncio.Lock:
         if account_id not in self._locks:
@@ -26,8 +28,16 @@ class MaxClientManager:
         return str(path)
 
     async def start_auth(self, account_id: int, phone: str) -> dict:
-        """Start Max authentication (phone-based, sends SMS code)"""
+        """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
+            # Stop existing client if any
+            if account_id in self._tasks:
+                self._tasks[account_id].cancel()
+                try:
+                    await self._tasks[account_id]
+                except (asyncio.CancelledError, Exception):
+                    pass
+
             try:
                 from pymax import SocketMaxClient
                 from pymax.payloads import UserAgentPayload
@@ -40,8 +50,38 @@ class MaxClientManager:
                 )
 
                 self._clients[account_id] = client
+                self._ready[account_id] = asyncio.Event()
 
-                return {'status': 'code_required', 'message': 'Подтвердите вход в приложении Max'}
+                # Register on_start handler to know when connected
+                @client.on_start
+                async def on_start():
+                    print(f"[MaxClient] Account {account_id} connected!", flush=True)
+                    self._ready[account_id].set()
+
+                # Start client in background task
+                async def run_client():
+                    try:
+                        print(f"[MaxClient] Starting auth for account {account_id}, phone: {phone}", flush=True)
+                        await client.start()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        print(f"[MaxClient] Client {account_id} error: {e}", flush=True)
+                        import traceback
+                        traceback.print_exc()
+
+                self._tasks[account_id] = asyncio.create_task(run_client())
+
+                # Wait a bit to see if it connects quickly (cached session)
+                try:
+                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=5.0)
+                    return {'status': 'success', 'message': 'Max аккаунт подключен (сессия из кеша)'}
+                except asyncio.TimeoutError:
+                    # Not connected yet - needs auth
+                    return {
+                        'status': 'auth_started',
+                        'message': 'Авторизация запущена. Код должен прийти по SMS или в приложение Max. Проверьте терминал сервера.'
+                    }
 
             except ImportError as ie:
                 raise RuntimeError(
@@ -52,30 +92,11 @@ class MaxClientManager:
                 traceback.print_exc()
                 raise RuntimeError(f"Max auth error: {e}")
 
-    async def connect_client(self, account_id: int, phone: str) -> bool:
-        """Connect an already authenticated Max client"""
-        async with self._get_lock(account_id):
-            try:
-                from pymax import SocketMaxClient
-                from pymax.payloads import UserAgentPayload
-
-                ua = UserAgentPayload(device_type="DESKTOP", app_version="25.12.13")
-                client = SocketMaxClient(
-                    phone=phone,
-                    work_dir=self._get_work_dir(account_id),
-                    headers=ua,
-                )
-
-                self._clients[account_id] = client
-                return True
-
-            except Exception as e:
-                print(f"[MaxClient] Failed to connect account {account_id}: {e}", flush=True)
-                return False
-
-    async def get_client(self, account_id: int) -> Optional[object]:
-        """Get connected Max client for account"""
-        return self._clients.get(account_id)
+    async def check_connected(self, account_id: int) -> bool:
+        """Check if client is connected"""
+        if account_id in self._ready:
+            return self._ready[account_id].is_set()
+        return False
 
     async def get_messages(
             self,
@@ -89,6 +110,11 @@ class MaxClientManager:
         client = self._clients.get(account_id)
         if not client:
             print(f"[MaxClient] No client for account {account_id}", flush=True)
+            return []
+
+        # Check if client is ready
+        if account_id in self._ready and not self._ready[account_id].is_set():
+            print(f"[MaxClient] Client {account_id} not yet connected", flush=True)
             return []
 
         start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
@@ -153,6 +179,14 @@ class MaxClientManager:
     async def disconnect_account(self, account_id: int):
         """Disconnect Max client for account"""
         async with self._get_lock(account_id):
+            if account_id in self._tasks:
+                self._tasks[account_id].cancel()
+                try:
+                    await self._tasks[account_id]
+                except (asyncio.CancelledError, Exception):
+                    pass
+                del self._tasks[account_id]
+
             if account_id in self._clients:
                 client = self._clients.pop(account_id)
                 try:
@@ -162,6 +196,9 @@ class MaxClientManager:
                         await client.disconnect()
                 except Exception:
                     pass
+
+            if account_id in self._ready:
+                del self._ready[account_id]
 
     async def close_all(self):
         """Close all Max client connections"""
