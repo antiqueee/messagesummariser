@@ -460,7 +460,23 @@
                 <h1>AI-агент охранки</h1>
                 <p>Мониторинг и суммаризация чатов строительных объектов</p>
             </div>
-            <span class="author">by Антон Антоненко</span>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <div id="proxy-widget" style="position: relative;">
+                    <div id="proxy-current" onclick="toggleProxyDropdown()" style="cursor: pointer; background: rgba(255,255,255,0.15); border-radius: 6px; padding: 6px 12px; font-size: 12px; display: flex; align-items: center; gap: 8px; min-width: 200px;">
+                        <span id="proxy-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #888; flex-shrink: 0;"></span>
+                        <span id="proxy-current-text" style="color: white;">Прокси: загрузка...</span>
+                        <span style="color: rgba(255,255,255,0.6); margin-left: auto;">&#9662;</span>
+                    </div>
+                    <div id="proxy-dropdown" style="display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.25); z-index: 1000; width: 420px; max-height: 400px; overflow-y: auto;">
+                        <div style="padding: 10px 14px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #333; font-size: 13px;">Прокси для Telegram</span>
+                            <button class="btn btn-secondary btn-small" onclick="recheckProxies()" style="font-size: 11px;">Перепроверить</button>
+                        </div>
+                        <div id="proxy-list"></div>
+                    </div>
+                </div>
+                <span class="author">by Антон Антоненко</span>
+            </div>
         </header>
 
         <div class="tabs">
@@ -486,13 +502,6 @@
                     <button class="btn btn-primary btn-small" onclick="showAddMaxAccountModal()">+ Добавить</button>
                 </h2>
                 <div id="max-accounts-list"></div>
-            </div>
-            <div class="section">
-                <h2 class="section-title">
-                    Прокси для Telegram
-                    <button class="btn btn-secondary btn-small" onclick="recheckProxies()">Перепроверить все</button>
-                </h2>
-                <div id="proxy-list" style="font-size: 13px;"></div>
             </div>
         </div>
 
@@ -1062,39 +1071,78 @@
         }
 
         // =================== Proxies ===================
+        function getLatencyColor(latency) {
+            if (!latency) return '#999';
+            const ms = latency * 1000;
+            if (ms < 50) return '#2ecc71';
+            if (ms < 150) return '#f39c12';
+            return '#e74c3c';
+        }
+
+        function toggleProxyDropdown() {
+            const dd = document.getElementById('proxy-dropdown');
+            dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const widget = document.getElementById('proxy-widget');
+            if (widget && !widget.contains(e.target)) {
+                document.getElementById('proxy-dropdown').style.display = 'none';
+            }
+        });
+
         async function loadProxies() {
             const container = document.getElementById('proxy-list');
+            const currentText = document.getElementById('proxy-current-text');
+            const statusDot = document.getElementById('proxy-status-dot');
             try {
                 const data = await api('/api/proxies');
+                // Update header widget
+                const current = data.proxies.find(p => p.is_current);
+                if (current) {
+                    const ms = current.latency ? `${(current.latency * 1000).toFixed(0)}ms` : '';
+                    currentText.textContent = `${current.host}:${current.port} ${ms}`;
+                    statusDot.style.background = current.is_working ? getLatencyColor(current.latency) : '#e74c3c';
+                } else {
+                    currentText.textContent = 'Не выбран';
+                    statusDot.style.background = '#888';
+                }
+
                 if (data.proxies.length === 0) {
-                    container.innerHTML = '<div class="empty-state">Нет прокси</div>';
+                    container.innerHTML = '<p style="padding: 15px; color: #888; font-size: 13px;">Нет прокси</p>';
                     return;
                 }
                 container.innerHTML = data.proxies.map(p => {
-                    const statusIcon = p.is_current ? '[ ACTIVE ]' : (p.is_working === true ? 'OK' : (p.is_working === false ? 'FAIL' : '?'));
-                    const statusColor = p.is_current ? '#2ecc71; font-weight:bold' : (p.is_working === true ? '#2ecc71' : (p.is_working === false ? '#e74c3c' : '#999'));
-                    const latency = p.latency ? `${(p.latency * 1000).toFixed(0)}ms` : '-';
+                    const ms = p.latency ? (p.latency * 1000).toFixed(0) : null;
+                    const latencyText = ms ? `${ms}ms` : '-';
+                    const dotColor = p.is_working === false ? '#e74c3c' : (p.is_working === true ? getLatencyColor(p.latency) : '#ccc');
                     return `
-                        <div style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #f0f0f0; ${p.is_current ? 'background: #e8f5e9;' : ''}">
-                            <span style="color: ${statusColor}; min-width: 60px; font-size: 12px;">${statusIcon}</span>
-                            <span style="min-width: 60px; color: #888; font-size: 12px;">${p.type.toUpperCase()}</span>
-                            <span style="flex: 1;">${p.host}:${p.port}</span>
-                            <span style="color: #888; min-width: 50px; text-align: right;">${latency}</span>
-                            ${!p.is_current ? `<button class="btn btn-small" style="font-size: 11px; padding: 2px 8px;" onclick="selectProxy(${p.index})">Выбрать</button>` : ''}
+                        <div onclick="${p.is_current ? '' : `selectProxy(${p.index})`}"
+                             style="display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid #f5f5f5; font-size: 12px; cursor: ${p.is_current ? 'default' : 'pointer'}; ${p.is_current ? 'background: #e8f5e9;' : ''}"
+                             ${p.is_current ? '' : 'onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'\'"'}>
+                            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${dotColor}; flex-shrink: 0;"></span>
+                            <span style="color: #888; min-width: 55px;">${p.type.toUpperCase()}</span>
+                            <span style="flex: 1; color: #333; ${p.is_current ? 'font-weight: 600;' : ''}">${p.host}:${p.port}</span>
+                            <span style="color: ${dotColor}; min-width: 45px; text-align: right; font-weight: 500;">${latencyText}</span>
+                            ${p.is_current ? '<span style="color: #2ecc71; font-size: 11px; font-weight: 600;">ACTIVE</span>' : ''}
                         </div>
                     `;
                 }).join('');
             } catch (e) {
-                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+                container.innerHTML = `<p style="padding: 15px; color: #e74c3c; font-size: 13px;">${e.message}</p>`;
+                currentText.textContent = 'Ошибка';
+                statusDot.style.background = '#e74c3c';
             }
         }
 
         async function recheckProxies() {
             const container = document.getElementById('proxy-list');
-            container.innerHTML = '<p style="color: #888;">Проверка прокси... Это может занять 30-60 секунд.</p>';
+            const currentText = document.getElementById('proxy-current-text');
+            container.innerHTML = '<p style="padding: 15px; color: #888; font-size: 13px;">Проверка прокси...</p>';
+            currentText.textContent = 'Проверка...';
             try {
-                const result = await api('/api/proxies/recheck', 'POST');
-                alert(result.message + (result.best ? `\nЛучший: ${result.best}` : '\nРабочих прокси не найдено'));
+                await api('/api/proxies/recheck', 'POST');
                 loadProxies();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
@@ -1104,8 +1152,8 @@
 
         async function selectProxy(index) {
             try {
-                const result = await api(`/api/proxies/${index}/select`, 'POST');
-                alert(result.message);
+                await api(`/api/proxies/${index}/select`, 'POST');
+                document.getElementById('proxy-dropdown').style.display = 'none';
                 loadProxies();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
