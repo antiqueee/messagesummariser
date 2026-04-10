@@ -98,6 +98,68 @@ class MaxClientManager:
             return self._ready[account_id].is_set()
         return False
 
+    async def get_dialogs(self, account_id: int) -> list[dict]:
+        """Get all dialogs (chats) from Max account"""
+        client = self._clients.get(account_id)
+        if not client:
+            print(f"[MaxClient] No client for account {account_id}", flush=True)
+            return []
+
+        if account_id in self._ready and not self._ready[account_id].is_set():
+            print(f"[MaxClient] Client {account_id} not yet connected", flush=True)
+            return []
+
+        dialogs = []
+        try:
+            # pymax stores synced chats/dialogs internally
+            # Try different attributes where pymax might store them
+            chats_data = None
+            for attr in ['chats', '_chats', 'dialogs', '_dialogs']:
+                if hasattr(client, attr):
+                    chats_data = getattr(client, attr)
+                    print(f"[MaxClient] Found chats in client.{attr}: {type(chats_data)}", flush=True)
+                    break
+
+            if chats_data is None:
+                # Try to get chats via method if available
+                for method in ['get_chats', 'get_dialogs', 'fetch_chats']:
+                    if hasattr(client, method):
+                        chats_data = await getattr(client, method)()
+                        print(f"[MaxClient] Got chats via client.{method}(): {type(chats_data)}", flush=True)
+                        break
+
+            if chats_data is None:
+                print(f"[MaxClient] Cannot find chats. Client attrs: {[a for a in dir(client) if not a.startswith('__')]}", flush=True)
+                return []
+
+            # Parse chats data
+            if isinstance(chats_data, dict):
+                for chat_id, chat in chats_data.items():
+                    title = getattr(chat, 'title', None) or getattr(chat, 'name', None) or str(chat_id)
+                    dialogs.append({
+                        'chat_id': int(chat_id) if not isinstance(chat_id, int) else chat_id,
+                        'title': str(title),
+                        'type': getattr(chat, 'type', 'unknown'),
+                    })
+            elif isinstance(chats_data, (list, tuple)):
+                for chat in chats_data:
+                    chat_id = getattr(chat, 'id', None) or getattr(chat, 'chat_id', 0)
+                    title = getattr(chat, 'title', None) or getattr(chat, 'name', None) or str(chat_id)
+                    dialogs.append({
+                        'chat_id': int(chat_id),
+                        'title': str(title),
+                        'type': getattr(chat, 'type', 'unknown'),
+                    })
+
+            print(f"[MaxClient] Found {len(dialogs)} dialogs", flush=True)
+
+        except Exception as e:
+            print(f"[MaxClient] Error getting dialogs: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+        return dialogs
+
     async def get_messages(
             self,
             account_id: int,

@@ -696,6 +696,31 @@ async def confirm_max_auth(account_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/max/accounts/{account_id}/sync")
+async def sync_max_chats(account_id: int):
+    """Sync chats from Max account (like Telegram sync)"""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    try:
+        mm = get_max_manager()
+        dialogs = await mm.get_dialogs(account_id)
+
+        synced = 0
+        for dialog in dialogs:
+            await db.upsert_max_chat(
+                max_chat_id=dialog['chat_id'],
+                max_account_id=account_id,
+                original_title=dialog['title']
+            )
+            synced += 1
+
+        return {"message": f"Синхронизировано чатов: {synced}", "count": synced}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/max/accounts/{account_id}/chats")
 async def add_max_chat(account_id: int, data: MaxChatAddRequest):
     """Manually add a Max chat to monitor"""
@@ -709,18 +734,6 @@ async def add_max_chat(account_id: int, data: MaxChatAddRequest):
         original_title=data.title
     )
     return {"id": chat_id, "message": "Max chat added"}
-
-
-@app.get("/api/max/accounts/{account_id}/chats")
-async def get_max_account_chats(account_id: int):
-    """Get chats associated with a Max account"""
-    account = await db.get_max_account(account_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="Max account not found")
-
-    chats = await db.get_chats()
-    max_chats = [c for c in chats if c.get('source') == 'max' and c.get('max_account_id') == account_id]
-    return {"chats": max_chats}
 
 
 # ============== Proxy Management ==============

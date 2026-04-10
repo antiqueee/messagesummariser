@@ -977,7 +977,8 @@
                             <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
                                 ${!acc.is_authorized
                                     ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
-                                    : `<button class="btn btn-success btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Чат</button>`}
+                                    : `<button class="btn btn-success btn-small" onclick="syncMaxChats(${acc.id})">Синхронизировать</button>
+                                       <button class="btn btn-secondary btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Вручную</button>`}
                                 <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
                                 ${acc.is_authorized
                                     ? '<span class="badge badge-success">Авторизован</span>'
@@ -1037,6 +1038,16 @@
                         alert('Ошибка: ' + (confirmResult.message || 'Не удалось подключиться'));
                     }
                 }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function syncMaxChats(accountId) {
+            try {
+                const result = await api(`/api/max/accounts/${accountId}/sync`, 'POST');
+                alert(result.message);
+                loadChats();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
             }
