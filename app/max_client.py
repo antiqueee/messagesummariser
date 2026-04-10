@@ -45,11 +45,13 @@ class MaxClientManager:
 
                 return {'status': 'code_required', 'message': 'SMS code sent to phone'}
 
-            except ImportError:
+            except ImportError as ie:
                 raise RuntimeError(
-                    "maxapi-python not installed. Run: pip install -U maxapi-python"
+                    f"maxapi-python not installed ({ie}). Run: pip install -U maxapi-python"
                 )
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise RuntimeError(f"Max auth error: {e}")
 
     async def connect_client(self, account_id: int, phone: str) -> bool:
