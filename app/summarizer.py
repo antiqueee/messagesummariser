@@ -158,11 +158,19 @@ class ChatSummarizer:
     """Summarizer using OpenRouter API with Gemini Flash (direct HTTP for proper UTF-8)"""
 
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemini-2.5-flash-preview-05-20"
+    MODELS_URL = "https://openrouter.ai/api/v1/models"
+    # Fallback chain: if first fails, try next
+    FALLBACK_MODELS = [
+        "google/gemini-2.5-flash-preview-05-20",
+        "google/gemini-2.5-flash-preview",
+        "google/gemini-2.0-flash-001",
+        "google/gemini-2.0-flash-exp:free",
+    ]
 
     def __init__(self, api_key: str, model: str = None):
         self.api_key = api_key
-        self.model = model or self.DEFAULT_MODEL
+        self.model = model or self.FALLBACK_MODELS[0]
+        self._model_verified = False
 
     def _format_messages(self, messages: list[dict]) -> str:
         """Format messages for the prompt"""
@@ -174,8 +182,61 @@ class ChatSummarizer:
             formatted.append(f"[{date_str}] {sender}: {text}")
         return "\n".join(formatted)
 
+    async def _find_working_model(self):
+        """Auto-detect a working Gemini Flash model from OpenRouter"""
+        if self._model_verified:
+            return
+
+        print(f"[API] Verifying model: {self.model}", flush=True)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json; charset=utf-8",
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Try to fetch available models and find a matching Gemini Flash
+            try:
+                resp = await client.get(self.MODELS_URL, headers=headers)
+                if resp.status_code == 200:
+                    models_data = resp.json()
+                    available_ids = {m['id'] for m in models_data.get('data', [])}
+
+                    # Check current model first
+                    if self.model in available_ids:
+                        print(f"[API] Model {self.model} is available", flush=True)
+                        self._model_verified = True
+                        return
+
+                    # Try fallbacks
+                    for fallback in self.FALLBACK_MODELS:
+                        if fallback in available_ids:
+                            print(f"[API] Model {self.model} not found, switching to {fallback}", flush=True)
+                            self.model = fallback
+                            self._model_verified = True
+                            return
+
+                    # Search for any available gemini flash model
+                    gemini_flash = [m_id for m_id in available_ids if 'gemini' in m_id and 'flash' in m_id]
+                    if gemini_flash:
+                        # Prefer the newest one
+                        chosen = sorted(gemini_flash)[-1]
+                        print(f"[API] Using auto-detected model: {chosen}", flush=True)
+                        self.model = chosen
+                        self._model_verified = True
+                        return
+
+                    print(f"[API] WARNING: No Gemini Flash model found, keeping {self.model}", flush=True)
+            except Exception as e:
+                print(f"[API] Could not verify models: {e}, keeping {self.model}", flush=True)
+
+        self._model_verified = True
+
     async def _call_api(self, prompt: str) -> str:
-        """Make API call to OpenRouter with proper UTF-8 encoding"""
+        """Make API call to OpenRouter with auto model fallback"""
+        # Auto-find working model on first call
+        await self._find_working_model()
+
         prompt_len = len(prompt)
         print(f"[API] Calling {self.model}, prompt length: {prompt_len} chars")
 
@@ -207,18 +268,39 @@ class ChatSummarizer:
 
             print(f"[API] Response status: {response.status_code}")
 
-            # Get response data for better error messages
             try:
                 data = response.json()
             except:
                 data = {"error": response.text}
 
+            # If model not found, try fallbacks automatically
             if response.status_code != 200:
                 error_msg = data.get("error", {})
                 if isinstance(error_msg, dict):
                     error_msg = error_msg.get("message", str(data))
-                print(f"[API] Error: {error_msg}")
-                raise Exception(f"OpenRouter API error: {error_msg}")
+
+                if "not a valid model" in str(error_msg).lower() or "model not found" in str(error_msg).lower():
+                    print(f"[API] Model {self.model} invalid, trying fallbacks...", flush=True)
+                    self._model_verified = False
+                    await self._find_working_model()
+
+                    # Retry with new model
+                    payload["model"] = self.model
+                    json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+                    response = await client.post(self.OPENROUTER_URL, headers=headers, content=json_bytes)
+                    try:
+                        data = response.json()
+                    except:
+                        data = {"error": response.text}
+
+                    if response.status_code != 200:
+                        error_msg = data.get("error", {})
+                        if isinstance(error_msg, dict):
+                            error_msg = error_msg.get("message", str(data))
+                        raise Exception(f"OpenRouter API error: {error_msg}")
+                else:
+                    print(f"[API] Error: {error_msg}")
+                    raise Exception(f"OpenRouter API error: {error_msg}")
 
             print(f"[API] Success, response length: {len(data['choices'][0]['message']['content'])} chars")
             return data["choices"][0]["message"]["content"]
