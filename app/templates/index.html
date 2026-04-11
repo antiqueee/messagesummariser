@@ -680,6 +680,20 @@
         </div>
     </div>
 
+    <div id="max-service-messages-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h3 class="modal-title">Сообщения в Max</h3>
+            <p id="max-service-messages-account" style="margin-bottom: 15px; color: #666;"></p>
+            <div id="max-service-messages-list" style="max-height: 400px; overflow-y: auto;">
+                <p style="color: #888;">Загрузка...</p>
+            </div>
+            <div class="input-group" style="margin-top: 15px;">
+                <button class="btn btn-secondary" onclick="loadMaxServiceMessages()">Обновить</button>
+                <button class="btn btn-secondary" onclick="closeModal('max-service-messages-modal')">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Add Max Account Modal -->
     <div id="add-max-account-modal" class="modal">
         <div class="modal-content">
@@ -986,6 +1000,7 @@
                                 ${!acc.is_authorized
                                     ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
                                     : `<button class="btn btn-success btn-small" onclick="syncMaxChats(${acc.id})">Синхронизировать</button>
+                                       <button class="btn btn-secondary btn-small" onclick="openMaxServiceMessages(${acc.id})">Сообщения Max</button>
                                        <button class="btn btn-secondary btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Вручную</button>`}
                                 <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
                                 ${acc.is_authorized
@@ -1181,6 +1196,30 @@
 
         // Service Messages
         let currentServiceMessagesAccountId = null;
+        let currentMaxServiceMessagesAccountId = null;
+
+        function highlightCodeHtml(text) {
+            return escapeHtml(text || '').replace(/(\d{4,8})/g, '<strong style="color: #2ecc71; font-size: 18px;">$1</strong>');
+        }
+
+        function renderServiceMessageCard(message, chatTitle = null, accentColor = '#3498db') {
+            const date = new Date(message.date);
+            const formattedDate = date.toLocaleString('ru-RU', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            return `
+                <div style="background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 10px; border-left: 3px solid ${accentColor};">
+                    <div style="font-size: 12px; color: #888; margin-bottom: 6px;">${formattedDate}</div>
+                    ${chatTitle ? `<div style="font-size: 12px; color: #666; margin-bottom: 6px;">${escapeHtml(chatTitle)}</div>` : ''}
+                    <div style="white-space: pre-wrap; word-break: break-word;">${highlightCodeHtml(message.text)}</div>
+                </div>
+            `;
+        }
 
         async function openServiceMessages(accountId) {
             currentServiceMessagesAccountId = accountId;
@@ -1204,30 +1243,37 @@
                     return;
                 }
 
-                container.innerHTML = data.messages.map(msg => {
-                    const date = new Date(msg.date);
-                    const formattedDate = date.toLocaleString('ru-RU', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
+                container.innerHTML = data.messages.map(msg => renderServiceMessageCard(msg)).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
 
-                    // Highlight login codes
-                    let text = msg.text;
-                    const codeMatch = text.match(/(\d{5,6})/);
-                    if (codeMatch) {
-                        text = text.replace(codeMatch[1], `<strong style="color: #2ecc71; font-size: 18px;">${codeMatch[1]}</strong>`);
-                    }
+        async function openMaxServiceMessages(accountId) {
+            currentMaxServiceMessagesAccountId = accountId;
+            document.getElementById('max-service-messages-list').innerHTML = '<p style="color: #888;">Загрузка...</p>';
+            document.getElementById('max-service-messages-account').textContent = '';
+            showModal('max-service-messages-modal');
+            await loadMaxServiceMessages();
+        }
 
-                    return `
-                        <div style="background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 10px; border-left: 3px solid #3498db;">
-                            <div style="font-size: 12px; color: #888; margin-bottom: 6px;">${formattedDate}</div>
-                            <div style="white-space: pre-wrap; word-break: break-word;">${text}</div>
-                        </div>
-                    `;
-                }).join('');
+        async function loadMaxServiceMessages() {
+            if (!currentMaxServiceMessagesAccountId) return;
+
+            const container = document.getElementById('max-service-messages-list');
+            try {
+                const data = await api(`/api/max/accounts/${currentMaxServiceMessagesAccountId}/service-messages?limit=30`);
+
+                document.getElementById('max-service-messages-account').textContent = `Аккаунт: ${data.account_phone}`;
+
+                if (data.messages.length === 0) {
+                    container.innerHTML = '<p style="color: #888;">Нет личных сообщений в Max</p>';
+                    return;
+                }
+
+                container.innerHTML = data.messages.map(msg =>
+                    renderServiceMessageCard(msg, msg.chat_title, '#1976d2')
+                ).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1479,15 +1525,23 @@
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
 
-            // Set default dates (last 24 hours)
+            // Set default dates in the browser's local timezone:
+            // start = previous day 00:00, end = current local time.
             const now = new Date();
-            const yesterday = new Date(now - 24 * 60 * 60 * 1000);
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            yesterday.setHours(0, 0, 0, 0);
             document.getElementById('report-end-date').value = formatDateForInput(now);
             document.getElementById('report-start-date').value = formatDateForInput(yesterday);
         }
 
         function formatDateForInput(date) {
-            return date.toISOString().slice(0, 16);
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            const h = String(date.getHours()).padStart(2, '0');
+            const min = String(date.getMinutes()).padStart(2, '0');
+            return `${y}-${m}-${d}T${h}:${min}`;
         }
 
         function getISODateFromInput(inputId) {

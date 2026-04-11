@@ -63,6 +63,8 @@ data/                — SQLite база (НЕ коммитить)
 - Прокси — **только для Telegram**. Max подключается напрямую через WebSocket.
 - Модуль `pysocks` может быть не установлен — обработать `ImportError` gracefully.
 - При отсутствии `pysocks` подключаться к Telegram напрямую без прокси.
+- НЕ хранить прокси и секреты в коде. Загружать их из `TELEGRAM_PROXY_URLS` или `TELEGRAM_PROXY_FILE`.
+- Поддерживаемые форматы: `mtproto://host:port?secret=...`, `tg://proxy?server=...&port=...&secret=...`, `socks5://user:pass@host:port`.
 
 ### Фронтенд
 - **HTML кэшируется браузером.** На эндпоинте `/` выставлять `Cache-Control: no-cache, no-store`.

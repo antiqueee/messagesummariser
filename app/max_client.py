@@ -36,6 +36,59 @@ class MaxClientManager:
         if account_id in self._ready:
             self._ready[account_id].clear()
 
+    def _extract_message_datetime(self, msg) -> Optional[datetime]:
+        """Best-effort datetime extraction for pymax messages."""
+        raw_date = getattr(msg, 'date', None)
+        if isinstance(raw_date, datetime):
+            return raw_date.replace(tzinfo=None)
+        if isinstance(raw_date, (int, float)):
+            timestamp = raw_date / 1000 if raw_date > 10**11 else raw_date
+            return datetime.fromtimestamp(timestamp)
+
+        raw_time = getattr(msg, 'time', None)
+        if isinstance(raw_time, (int, float)):
+            timestamp = raw_time / 1000 if raw_time > 10**11 else raw_time
+            return datetime.fromtimestamp(timestamp)
+
+        return None
+
+    def _normalize_message(self, msg) -> Optional[dict]:
+        """Convert pymax message into app message format."""
+        text = getattr(msg, 'text', None)
+        if not text:
+            return None
+
+        msg_date = self._extract_message_datetime(msg)
+
+        sender_id = getattr(msg, 'sender_id', None)
+        if sender_id in (None, 0):
+            sender_id = getattr(msg, 'from_id', None)
+        if sender_id in (None, 0):
+            sender_id = getattr(msg, 'sender', 0) or 0
+
+        sender_name = str(sender_id) if sender_id else 'Unknown'
+        sender = getattr(msg, 'sender', None)
+        if sender and not isinstance(sender, (int, float)):
+            sender_name = str(sender)
+
+        return {
+            'message_id': getattr(msg, 'id', 0),
+            'sender_id': sender_id if isinstance(sender_id, int) else 0,
+            'sender_name': sender_name,
+            'text': text,
+            'date': (msg_date or datetime.now()).isoformat() + 'Z',
+            'reply_to': None,
+            'topic_id': None,
+            '_sort_ts': msg_date.timestamp() if msg_date else 0,
+        }
+
+    def _get_dialog_title(self, dialog) -> str:
+        dialog_id = int(getattr(dialog, 'id', 0))
+        dialog_type = str(getattr(dialog, 'type', 'dialog'))
+        if dialog_type == 'dialog':
+            return f"Личный диалог {dialog_id}"
+        return f"Диалог {dialog_id}"
+
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
@@ -58,7 +111,7 @@ class MaxClientManager:
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
-                    reconnect=True,
+                    reconnect=False,
                 )
 
                 self._clients[account_id] = client
@@ -271,43 +324,16 @@ class MaxClientManager:
 
         try:
             for msg in history:
-                if not hasattr(msg, 'text') or not msg.text:
+                normalized = self._normalize_message(msg)
+                if not normalized:
                     continue
 
-                # Parse message date if available
-                msg_date = None
-                if hasattr(msg, 'date') and msg.date:
-                    if isinstance(msg.date, datetime):
-                        msg_date = msg.date.replace(tzinfo=None)
-                    elif isinstance(msg.date, (int, float)):
-                        msg_date = datetime.fromtimestamp(msg.date)
+                msg_date = self._extract_message_datetime(msg)
+                if msg_date and (msg_date < start_naive or msg_date > end_naive):
+                    continue
 
-                # Filter by date range if we have date info
-                if msg_date:
-                    if msg_date < start_naive or msg_date > end_naive:
-                        continue
-
-                sender_name = 'Unknown'
-                sender_id = 0
-                if hasattr(msg, 'sender'):
-                    sender_name = str(msg.sender) if msg.sender else 'Unknown'
-                if hasattr(msg, 'sender_id'):
-                    sender_id = msg.sender_id or 0
-                elif hasattr(msg, 'from_id'):
-                    sender_id = msg.from_id or 0
-
-                msg_id = getattr(msg, 'id', 0)
-                date_str = msg_date.isoformat() + 'Z' if msg_date else datetime.now().isoformat() + 'Z'
-
-                messages.append({
-                    'message_id': msg_id,
-                    'sender_id': sender_id,
-                    'sender_name': sender_name,
-                    'text': msg.text,
-                    'date': date_str,
-                    'reply_to': None,
-                    'topic_id': None
-                })
+                normalized.pop('_sort_ts', None)
+                messages.append(normalized)
 
             print(f"[MaxClient] Found {len(messages)} messages", flush=True)
 
@@ -319,6 +345,56 @@ class MaxClientManager:
 
         # Return in chronological order
         return list(reversed(messages))
+
+    async def get_service_messages(self, account_id: int, limit: int = 20) -> list[dict]:
+        """Get recent messages from Max private dialogs for code lookup."""
+        client = self._clients.get(account_id)
+        if not client:
+            print(f"[MaxClient] No client for account {account_id}", flush=True)
+            return []
+
+        if not await self._ensure_runtime_connection(account_id):
+            print(f"[MaxClient] Client {account_id} not connected", flush=True)
+            return []
+
+        client = self._clients.get(account_id)
+        if not client:
+            return []
+
+        dialogs = getattr(client, 'dialogs', []) or []
+        if not dialogs:
+            return []
+
+        results = []
+        seen_ids = set()
+        history_depth = max(30, min(limit * 3, 100))
+
+        for dialog in dialogs:
+            dialog_id = int(getattr(dialog, 'id', 0))
+            if not dialog_id or dialog_id in seen_ids:
+                continue
+            seen_ids.add(dialog_id)
+
+            try:
+                history = await client.fetch_history(chat_id=dialog_id, backward=history_depth)
+            except Exception as e:
+                print(f"[MaxClient] Error fetching private dialog {dialog_id}: {e}", flush=True)
+                continue
+
+            dialog_title = self._get_dialog_title(dialog)
+            for msg in history or []:
+                normalized = self._normalize_message(msg)
+                if not normalized:
+                    continue
+                normalized['chat_id'] = dialog_id
+                normalized['chat_title'] = dialog_title
+                results.append(normalized)
+
+        results.sort(key=lambda item: item.get('_sort_ts', 0), reverse=True)
+        trimmed = results[:limit]
+        for item in trimmed:
+            item.pop('_sort_ts', None)
+        return trimmed
 
     async def disconnect_account(self, account_id: int):
         """Disconnect Max client for account"""

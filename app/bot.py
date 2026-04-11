@@ -11,6 +11,7 @@ from aiogram.enums import ParseMode
 
 from . import database as db
 from .telegram_client import get_telegram_manager
+from .max_client import get_max_manager
 from .summarizer import get_summarizer, get_default_report_rules, get_default_negativists_rules
 
 router = Router()
@@ -127,6 +128,39 @@ def get_period_dates(period: str) -> tuple[datetime, datetime]:
 
 def format_period(start: datetime, end: datetime) -> str:
     return f"{start.strftime('%d.%m.%Y %H:%M')} — {end.strftime('%d.%m.%Y %H:%M')}"
+
+
+async def _fetch_chat_messages(chat: dict, start_date: datetime, end_date: datetime,
+                               topic_ids: Optional[list[int]] = None) -> list[dict]:
+    """Fetch messages from the correct source without coupling Telegram and Max."""
+    source = chat.get('source') or 'telegram'
+
+    if source == 'max':
+        mm = get_max_manager()
+        max_account_id = chat.get('max_account_id')
+        if not max_account_id:
+            return []
+
+        max_acc = await db.get_max_account(max_account_id)
+        if not max_acc:
+            return []
+
+        await mm.ensure_connected(max_account_id, max_acc['phone'])
+        return await mm.get_messages(
+            account_id=max_account_id,
+            chat_id=chat['telegram_id'],
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    tm = get_telegram_manager()
+    return await tm.get_messages(
+        account_id=chat['account_id'],
+        chat_telegram_id=chat['telegram_id'],
+        start_date=start_date,
+        end_date=end_date,
+        topic_ids=topic_ids
+    )
 
 
 # ============== Commands ==============
@@ -258,11 +292,6 @@ async def generate_full_report(start_date: datetime, end_date: datetime, allowed
         allowed_complex_ids: List of complex IDs to include. None means all.
     """
     try:
-        tm = get_telegram_manager()
-    except RuntimeError:
-        raise Exception("Telegram менеджер не инициализирован")
-
-    try:
         summarizer = get_summarizer()
     except RuntimeError:
         summarizer = None
@@ -299,13 +328,7 @@ async def generate_full_report(start_date: datetime, end_date: datetime, allowed
                 except:
                     pass
 
-            messages = await tm.get_messages(
-                account_id=chat['account_id'],
-                chat_telegram_id=chat['telegram_id'],
-                start_date=start_date,
-                end_date=end_date,
-                topic_ids=topic_ids
-            )
+            messages = await _fetch_chat_messages(chat, start_date, end_date, topic_ids)
 
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
@@ -419,11 +442,6 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime, allo
         allowed_complex_ids: List of complex IDs to include. None means all.
     """
     try:
-        tm = get_telegram_manager()
-    except RuntimeError:
-        raise Exception("Telegram менеджер не инициализирован")
-
-    try:
         summarizer = get_summarizer()
     except RuntimeError:
         raise Exception("AI-суммаризатор не настроен")
@@ -449,13 +467,7 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime, allo
                 except:
                     pass
 
-            messages = await tm.get_messages(
-                account_id=chat['account_id'],
-                chat_telegram_id=chat['telegram_id'],
-                start_date=start_date,
-                end_date=end_date,
-                topic_ids=topic_ids
-            )
+            messages = await _fetch_chat_messages(chat, start_date, end_date, topic_ids)
 
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
@@ -485,6 +497,7 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime, allo
 
 _bot: Optional[Bot] = None
 _dp: Optional[Dispatcher] = None
+_polling_task: Optional[asyncio.Task] = None
 
 
 async def start_bot(token: str, admin_id: int, demo_user_ids: Optional[set[int]] = None, demo_complex_id: Optional[int] = None):
@@ -496,7 +509,7 @@ async def start_bot(token: str, admin_id: int, demo_user_ids: Optional[set[int]]
         demo_user_ids: Set of Telegram user IDs for demo access
         demo_complex_id: Complex ID that demo users can access
     """
-    global _bot, _dp, ADMIN_ID, DEMO_USER_IDS, DEMO_COMPLEX_ID
+    global _bot, _dp, _polling_task, ADMIN_ID, DEMO_USER_IDS, DEMO_COMPLEX_ID
     ADMIN_ID = admin_id
     DEMO_USER_IDS = demo_user_ids or set()
     DEMO_COMPLEX_ID = demo_complex_id
@@ -509,7 +522,7 @@ async def start_bot(token: str, admin_id: int, demo_user_ids: Optional[set[int]]
     print(f"[Bot] Starting bot, admin_id={admin_id}{demo_info}")
 
     # Start polling in background task
-    asyncio.create_task(_run_polling())
+    _polling_task = asyncio.create_task(_run_polling())
 
 
 async def _run_polling():
@@ -522,9 +535,17 @@ async def _run_polling():
 
 async def stop_bot():
     """Stop the bot"""
-    global _bot, _dp
+    global _bot, _dp, _polling_task
     if _dp:
         await _dp.stop_polling()
+    if _polling_task:
+        try:
+            await _polling_task
+        except asyncio.CancelledError:
+            pass
+        _polling_task = None
     if _bot:
         await _bot.session.close()
+        _bot = None
+    _dp = None
     print("[Bot] Stopped")

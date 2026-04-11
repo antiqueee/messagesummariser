@@ -55,7 +55,7 @@ class TelegramClientManager:
         if proxy:
             print(f"[TelegramClient] Using proxy: {proxy}", flush=True)
         else:
-            print("[TelegramClient] No working proxy found, connecting directly", flush=True)
+            raise ConnectionError("Нет рабочего Telegram прокси. Проверьте файл прокси.")
         self._proxy_initialized = True
 
     def _create_client(self, session_path: str, proxy: Optional[ProxyConfig] = None) -> TelegramClient:
@@ -143,28 +143,6 @@ class TelegramClientManager:
                     await self._safe_disconnect(client)
                     raise
 
-            # Fallback: try direct connection without proxy
-            if last_error and self.use_proxy:
-                print(f"[TelegramClient] All proxies failed, trying direct connection...", flush=True)
-                client = None
-                try:
-                    client = self._create_client(str(session_path), proxy=None)
-                    await asyncio.wait_for(client.connect(), timeout=30)
-
-                    if await client.is_user_authorized():
-                        self._clients[account_id] = client
-                        print(f"[TelegramClient] Direct connection successful!", flush=True)
-                        return client
-                    return None
-
-                except asyncio.CancelledError:
-                    print(f"[TelegramClient] Direct connection cancelled for account {account_id}", flush=True)
-                    await self._safe_disconnect(client)
-                    raise
-                except Exception as e:
-                    print(f"[TelegramClient] Direct connection also failed: {e}", flush=True)
-                    await self._safe_disconnect(client)
-
             if last_error:
                 print(f"[TelegramClient] All connection attempts failed: {last_error}", flush=True)
             return None
@@ -225,34 +203,6 @@ class TelegramClientManager:
                     print(f"[Auth] ERROR sending code: {e}")
                     traceback.print_exc()
                     raise
-
-            # Fallback: try direct connection without proxy
-            if last_error and self.use_proxy:
-                print(f"[Auth] All proxies failed, trying direct connection...", flush=True)
-                client = None
-                try:
-                    client = self._create_client(str(session_path), proxy=None)
-                    await asyncio.wait_for(client.connect(), timeout=30)
-                    print(f"[Auth] Direct connection successful!")
-
-                    result = await client.send_code_request(phone)
-                    print(f"[Auth] Code sent! Type: {result.type}")
-
-                    self._pending_auth[account_id] = {
-                        'client': client,
-                        'phone': phone,
-                        'phone_code_hash': result.phone_code_hash
-                    }
-
-                    return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
-
-                except asyncio.CancelledError:
-                    print(f"[Auth] Direct authentication connection cancelled for account {account_id}", flush=True)
-                    await self._safe_disconnect(client)
-                    raise
-                except Exception as e:
-                    print(f"[Auth] Direct connection also failed: {e}", flush=True)
-                    await self._safe_disconnect(client)
 
             # All attempts failed
             raise ConnectionError(f"Failed to connect after {max_retries} attempts: {last_error}")

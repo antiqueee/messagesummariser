@@ -14,9 +14,10 @@ if sys.stdout.encoding != 'utf-8':
 import uvicorn
 
 if __name__ == "__main__":
+    reload_enabled = os.getenv("UVICORN_RELOAD", "").lower() in {"1", "true", "yes", "on"}
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=reload_enabled
     )

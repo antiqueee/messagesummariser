@@ -88,6 +88,11 @@ async def lifespan(app: FastAPI):
 
     if api_id and api_hash:
         init_telegram_manager(int(api_id), api_hash)
+        try:
+            pm = get_proxy_manager()
+            await pm.start_background_monitor()
+        except Exception as e:
+            print(f"[ProxyManager] WARNING: background monitor not started: {e}", flush=True)
 
     # Initialize Max messenger manager
     mm = init_max_manager()
@@ -151,6 +156,11 @@ async def lifespan(app: FastAPI):
     try:
         await stop_bot()
     except:
+        pass
+    try:
+        pm = get_proxy_manager()
+        await pm.stop_background_monitor()
+    except Exception:
         pass
     try:
         tm = get_telegram_manager()
@@ -837,6 +847,30 @@ async def sync_max_chats(account_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/max/accounts/{account_id}/service-messages")
+async def get_max_service_messages(account_id: int, limit: int = 20):
+    """Get recent private Max messages to retrieve login codes."""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    if not account['is_authorized']:
+        raise HTTPException(status_code=400, detail="Max account not authorized")
+
+    try:
+        mm = get_max_manager()
+        connected = await mm.ensure_connected(account_id, account['phone'])
+        if not connected:
+            raise HTTPException(status_code=400, detail="Клиент Max не подключен")
+
+        messages = await mm.get_service_messages(account_id, limit=limit)
+        return {"messages": messages, "account_phone": account['phone']}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/max/accounts/{account_id}/chats")
 async def add_max_chat(account_id: int, data: MaxChatAddRequest):
     """Manually add a Max chat to monitor"""
@@ -893,6 +927,11 @@ async def select_proxy(index: int):
     if index < 0 or index >= len(pm.proxies):
         raise HTTPException(status_code=404, detail="Proxy not found")
     proxy = pm.proxies[index]
+    if not pm._is_supported_proxy(proxy):
+        raise HTTPException(status_code=400, detail="Прокси не поддерживается текущей версией Telethon")
+    is_working = await pm.check_proxy(proxy)
+    if not is_working:
+        raise HTTPException(status_code=400, detail="Прокси не отвечает и не может быть выбран")
     pm._current_proxy = proxy
     return {'message': f'Выбран прокси: {proxy}', 'proxy': str(proxy)}
 
@@ -906,18 +945,45 @@ async def health_check():
         'status': 'ok',
         'telegram_configured': False,
         'max_configured': False,
-        'summarizer_configured': False
+        'summarizer_configured': False,
+        'proxy': {
+            'configured': False,
+            'current': None,
+            'working_count': 0,
+        },
+        'accounts': {
+            'telegram_total': 0,
+            'telegram_authorized': 0,
+            'telegram_connected': 0,
+            'max_total': 0,
+            'max_authorized': 0,
+            'max_connected': 0,
+        }
     }
 
     try:
-        get_telegram_manager()
+        tm = get_telegram_manager()
         status['telegram_configured'] = True
+        tg_accounts = await db.get_accounts()
+        status['accounts']['telegram_total'] = len(tg_accounts)
+        status['accounts']['telegram_authorized'] = sum(1 for acc in tg_accounts if acc['is_authorized'])
+        status['accounts']['telegram_connected'] = sum(
+            1 for acc_id in getattr(tm, '_clients', {})
+            if getattr(tm._clients.get(acc_id), 'is_connected', lambda: False)()
+        )
     except RuntimeError:
         pass
 
     try:
-        get_max_manager()
+        mm = get_max_manager()
         status['max_configured'] = True
+        max_accounts = await db.get_max_accounts()
+        status['accounts']['max_total'] = len(max_accounts)
+        status['accounts']['max_authorized'] = sum(1 for acc in max_accounts if acc['is_authorized'])
+        status['accounts']['max_connected'] = sum(
+            1 for acc_id in getattr(mm, '_clients', {})
+            if bool(getattr(mm._clients.get(acc_id), 'is_connected', False))
+        )
     except RuntimeError:
         pass
 
@@ -926,5 +992,27 @@ async def health_check():
         status['summarizer_configured'] = True
     except RuntimeError:
         pass
+
+    try:
+        pm = get_proxy_manager()
+        status['proxy']['configured'] = True
+        status['proxy']['working_count'] = sum(1 for proxy in pm.proxies if proxy.is_working)
+        if pm.current_proxy:
+            status['proxy']['current'] = {
+                'type': pm.current_proxy.type,
+                'host': pm.current_proxy.host,
+                'port': pm.current_proxy.port,
+                'is_working': pm.current_proxy.is_working,
+                'latency': round(pm.current_proxy.latency, 3) if pm.current_proxy.latency else None,
+            }
+    except Exception:
+        pass
+
+    if status['telegram_configured'] and status['accounts']['telegram_authorized'] and status['accounts']['telegram_connected'] == 0:
+        status['status'] = 'degraded'
+    if status['max_configured'] and status['accounts']['max_authorized'] and status['accounts']['max_connected'] == 0:
+        status['status'] = 'degraded'
+    if status['proxy']['configured'] and status['accounts']['telegram_authorized'] and status['proxy']['working_count'] == 0:
+        status['status'] = 'degraded'
 
     return status

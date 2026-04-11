@@ -5,11 +5,15 @@ Handles MTProto and SOCKS5 proxies with automatic failover.
 
 import asyncio
 import base64
+import os
+import re
 import time
-import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Literal
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs
+
+DEFAULT_PROXY_FILE = Path(__file__).parent.parent / "data" / "telegram_proxies.txt"
 
 
 @dataclass
@@ -31,55 +35,113 @@ class ProxyConfig:
         return f"SOCKS5({self.host}:{self.port})"
 
 
-# Embedded proxy list - parsed from user-provided URLs
-EMBEDDED_PROXIES: list[ProxyConfig] = [
-    # MTProto proxies
-    ProxyConfig(type='mtproto', host='ppl.vpnpplvpn.top', port=8443, secret='ddbd7949ea22934a3af773233bd1e6cd87'),
-    ProxyConfig(type='mtproto', host='87.242.100.25', port=443, secret='7vpB16tZIxq3FLeGXJAWoTVhZHMueDUucnU'),
-    ProxyConfig(type='mtproto', host='95.174.92.184', port=443, secret='7oXkkzKLeg0bKvbEsP2UilBhZHMueDUucnU'),
-    ProxyConfig(type='mtproto', host='176.109.105.129', port=443, secret='7iSMQ7eu6Xxv6IcxFFKjIwJhZHMueDUucnU'),
-    ProxyConfig(type='mtproto', host='84.201.179.235', port=443, secret='7iSMQ7eu6Xxv6IcxFFKjIwJhZHMueDUucnU'),
-    ProxyConfig(type='mtproto', host='51.250.89.205', port=443, secret='7iSMQ7eu6Xxv6IcxFFKjIwJhZHMueDUucnU'),
-    ProxyConfig(type='mtproto', host='tgrmx.ru', port=443, secret='dd6575860df1848335b7110ca37d01f14a'),
-    ProxyConfig(type='mtproto', host='185.130.113.138', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='proxy99.madapp.cc', port=443, secret='dd4482437e89f9af8929514eee7faaf61f'),
-    ProxyConfig(type='mtproto', host='90.156.213.122', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='92.118.234.215', port=443, secret='dddb9b51b5ce9a2820ff62d348cb23f1b9'),
-    ProxyConfig(type='mtproto', host='94.228.210.66', port=443, secret='7gr2vS88j7CxwUq8weBpfTd2ay5ydQ'),
-    ProxyConfig(type='mtproto', host='7b5b3.blancproxy.link', port=443, secret='dd97c420070f5eb3ba3c22b9635576d9f1'),
-    ProxyConfig(type='mtproto', host='cccp.jobinvest.ru', port=443, secret='7iCEx+WNghMpajIG2nA1bIFqb2JpbnZlc3QucnU'),
-    ProxyConfig(type='mtproto', host='quackton.life', port=443, secret='7mX8dVOh9cqLULccAVs4ciR5YW5kZXgucnU'),
-    ProxyConfig(type='mtproto', host='tg.vpnspacev.com', port=443, secret='bc184fc14b62b9b1dc5f34edf9476421'),
-    ProxyConfig(type='mtproto', host='mt.flashgatevpn.ru', port=1337, secret='7p5K6Y/F/MbsztYRq2V/nBx3d3cuZ29vZ2xlLmNvbQ'),
-    ProxyConfig(type='mtproto', host='mttg.2nevo4hosts.pro', port=8443, secret='7i/ak0PTd7FciYy9i4BOPPVtdHRnLjJuZXZvNGhvc3RzLnBybw'),
-    ProxyConfig(type='mtproto', host='83.166.254.255', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='83.166.254.200', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='83.166.253.198', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='83.166.254.85', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='83.166.254.78', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='83.166.254.26', port=443, secret='dd6b3fb02424dbac55fef2da67c8c949'),
-    ProxyConfig(type='mtproto', host='tg.pepewtf.top', port=443, secret='7ss8Rzx7vqAIVQA6txVmjFB0Zy5wZXBld3RmLnRvcA'),
-    ProxyConfig(type='mtproto', host='telegram-proxy-v2.sssrvpn.pro', port=443, secret='2084c7e58d8213296a3206da70356c81'),
-    ProxyConfig(type='mtproto', host='213.165.58.172', port=443, secret='ea2b5e9e884893637299f4053fc9aa30'),
-    ProxyConfig(type='mtproto', host='213.176.77.46', port=443, secret='e2e672f206391b49befaa68252f750bc'),
-    ProxyConfig(type='mtproto', host='84.201.175.61', port=443, secret='eead24ce88888cf6231e908ca911628e'),
-    ProxyConfig(type='mtproto', host='telegram-proxy.sssrvpn.pro', port=443, secret='2084c7e58d8213296a3206da70356c81'),
-    # SOCKS5 proxies
-    ProxyConfig(type='socks5', host='109.120.189.122', port=1080, username='tgproxy', password='VKRecaXEinjq3M9U'),
-    ProxyConfig(type='socks5', host='109.120.191.248', port=1080, username='tgproxy', password='xVGavfDim6nxSvby'),
-    ProxyConfig(type='socks5', host='nether.kosmojoy.ru', port=48557, username='vpn_kosmo_bot', password='vpn_kosmo_bot'),
-]
+def parse_proxy_url(proxy_url: str) -> ProxyConfig:
+    """Parse MTProto or SOCKS5 proxy URL into ProxyConfig."""
+    raw = proxy_url.strip()
+    if not raw:
+        raise ValueError("empty proxy url")
+
+    parsed = urlparse(raw)
+    scheme = parsed.scheme.lower()
+
+    if scheme in {'socks5', 'socks5h'}:
+        if not parsed.hostname or not parsed.port:
+            raise ValueError(f"invalid SOCKS5 proxy URL: {raw}")
+        return ProxyConfig(
+            type='socks5',
+            host=parsed.hostname,
+            port=parsed.port,
+            username=parsed.username,
+            password=parsed.password,
+        )
+
+    if scheme == 'mtproto':
+        secret = parsed.password or parsed.username
+        if not secret:
+            query = parse_qs(parsed.query)
+            secret = (query.get('secret') or [None])[0]
+        if not parsed.hostname or not parsed.port or not secret:
+            raise ValueError(f"invalid MTProto proxy URL: {raw}")
+        return ProxyConfig(
+            type='mtproto',
+            host=parsed.hostname,
+            port=parsed.port,
+            secret=secret,
+        )
+
+    if scheme == 'tg':
+        query = parse_qs(parsed.query)
+        host = (query.get('server') or [None])[0]
+        port = (query.get('port') or [None])[0]
+        secret = (query.get('secret') or [None])[0]
+        if not host or not port or not secret:
+            raise ValueError(f"invalid tg:// proxy URL: {raw}")
+        return ProxyConfig(type='mtproto', host=host, port=int(port), secret=secret)
+
+    raise ValueError(f"unsupported proxy URL scheme: {scheme}")
+
+
+def _iter_configured_proxy_urls() -> list[str]:
+    """Load proxy URLs from env var or file."""
+    urls: list[str] = []
+
+    env_urls = os.getenv('TELEGRAM_PROXY_URLS', '').strip()
+    if env_urls:
+        urls.extend(part.strip() for part in re.split(r'[\n,;]+', env_urls) if part.strip())
+
+    proxy_file = os.getenv('TELEGRAM_PROXY_FILE', '').strip()
+    candidate_paths: list[Path] = []
+    if proxy_file:
+        candidate_paths.append(Path(proxy_file).expanduser())
+    candidate_paths.append(DEFAULT_PROXY_FILE)
+
+    seen_paths: set[Path] = set()
+    for path in candidate_paths:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+
+        if path.exists():
+            for line in path.read_text(encoding='utf-8').splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    urls.append(line)
+            break
+
+        if proxy_file and path == Path(proxy_file).expanduser():
+            print(f"[ProxyManager] Proxy file not found: {path}", flush=True)
+
+    return urls
+
+
+def load_configured_proxies() -> list[ProxyConfig]:
+    """Load proxies from configuration without embedding secrets in code."""
+    proxies: list[ProxyConfig] = []
+    for raw in _iter_configured_proxy_urls():
+        try:
+            proxies.append(parse_proxy_url(raw))
+        except Exception as e:
+            print(f"[ProxyManager] Skipping invalid proxy config '{raw}': {e}", flush=True)
+
+    if proxies:
+        print(f"[ProxyManager] Loaded {len(proxies)} proxies from configuration", flush=True)
+    else:
+        print("[ProxyManager] No configured proxies found", flush=True)
+
+    return proxies
 
 
 class ProxyManager:
     """Manages proxy selection and health checking for Telegram connections"""
 
     def __init__(self, proxies: list[ProxyConfig] = None):
-        self.proxies = proxies or EMBEDDED_PROXIES.copy()
+        self.proxies = list(proxies) if proxies is not None else load_configured_proxies()
         self._current_proxy: Optional[ProxyConfig] = None
         self._check_lock = asyncio.Lock()
         self._last_full_check: float = 0
         self._check_interval = 300  # 5 minutes between full checks
+        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_stop = asyncio.Event()
 
     @property
     def current_proxy(self) -> Optional[ProxyConfig]:
@@ -188,6 +250,16 @@ class ProxyManager:
 
         return self._current_proxy
 
+    async def ensure_current_proxy(self) -> Optional[ProxyConfig]:
+        """Ensure we have a currently healthy proxy selected."""
+        if self._current_proxy and self._current_proxy.is_working:
+            if (
+                self._current_proxy.last_check is not None and
+                (time.time() - self._current_proxy.last_check) <= self._check_interval
+            ):
+                return self._current_proxy
+        return await self.get_best_proxy(force_recheck=True)
+
     async def get_next_proxy(self) -> Optional[ProxyConfig]:
         """
         Get next working proxy (when current one fails).
@@ -208,6 +280,48 @@ class ProxyManager:
         # No known working proxies - do full recheck
         print("[ProxyManager] No known working proxies, rechecking all...", flush=True)
         return await self.get_best_proxy(force_recheck=True)
+
+    async def start_background_monitor(self, interval: float = 120.0):
+        """Start background proxy health monitoring."""
+        if self._monitor_task and not self._monitor_task.done():
+            return
+
+        self._monitor_stop = asyncio.Event()
+
+        async def _monitor_loop():
+            print(f"[ProxyManager] Background monitor started, interval={interval}s", flush=True)
+            try:
+                while not self._monitor_stop.is_set():
+                    try:
+                        await self.ensure_current_proxy()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        print(f"[ProxyManager] Background monitor error: {e}", flush=True)
+
+                    try:
+                        await asyncio.wait_for(self._monitor_stop.wait(), timeout=interval)
+                    except asyncio.TimeoutError:
+                        continue
+            except asyncio.CancelledError:
+                raise
+            finally:
+                print("[ProxyManager] Background monitor stopped", flush=True)
+
+        self._monitor_task = asyncio.create_task(_monitor_loop())
+
+    async def stop_background_monitor(self):
+        """Stop background proxy monitoring."""
+        if not self._monitor_task:
+            return
+
+        self._monitor_stop.set()
+        self._monitor_task.cancel()
+        try:
+            await self._monitor_task
+        except asyncio.CancelledError:
+            pass
+        self._monitor_task = None
 
     def get_telethon_proxy_args(self, proxy: ProxyConfig) -> dict:
         """
