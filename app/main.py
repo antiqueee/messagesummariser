@@ -1,5 +1,6 @@
 import os
 import re
+import traceback
 from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -42,6 +43,25 @@ def extract_building_number(chat_name: str) -> tuple[int, str]:
 def sort_chats_by_building(chats: list[dict]) -> list[dict]:
     """Sort chats: buildings first (by number), then general chats"""
     return sorted(chats, key=lambda c: extract_building_number(c.get('custom_name') or c.get('original_title') or ''))
+
+
+def format_chat_log_context(chat: dict, start_date: Optional[datetime] = None,
+                            end_date: Optional[datetime] = None,
+                            topic_ids: Optional[list[int]] = None) -> str:
+    """Build a compact chat context string for diagnostic logs."""
+    return (
+        f"chat_db_id={chat.get('id')}, "
+        f"source={chat.get('source') or 'telegram'}, "
+        f"chat_name={chat.get('custom_name') or chat.get('original_title')!r}, "
+        f"original_title={chat.get('original_title')!r}, "
+        f"telegram_id={chat.get('telegram_id')!r} ({type(chat.get('telegram_id')).__name__}), "
+        f"account_id={chat.get('account_id')!r}, "
+        f"max_account_id={chat.get('max_account_id')!r}, "
+        f"selected_topics_raw={chat.get('selected_topics')!r}, "
+        f"topic_ids={topic_ids!r}, "
+        f"start_date={start_date!r}, "
+        f"end_date={end_date!r}"
+    )
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .max_client import init_max_manager, get_max_manager
 from .proxy_manager import get_proxy_manager
@@ -454,7 +474,12 @@ async def generate_report(data: GenerateReportRequest):
                     )
                 except Exception as e:
                     chat_name = chat['custom_name'] or chat['original_title']
-                    print(f"[Report] ERROR fetching Max messages from {chat_name}: {e}", flush=True)
+                    print(
+                        f"[Report] ERROR fetching Max messages from {chat_name}: {e}\n"
+                        f"[Report] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                        flush=True
+                    )
+                    traceback.print_exc()
                     raise HTTPException(
                         status_code=500,
                         detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
@@ -470,7 +495,12 @@ async def generate_report(data: GenerateReportRequest):
                     )
                 except Exception as e:
                     chat_name = chat['custom_name'] or chat['original_title']
-                    print(f"[Report] ERROR fetching messages from {chat_name}: {e}", flush=True)
+                    print(
+                        f"[Report] ERROR fetching messages from {chat_name}: {e}\n"
+                        f"[Report] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                        flush=True
+                    )
+                    traceback.print_exc()
                     raise HTTPException(
                         status_code=500,
                         detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."
@@ -613,7 +643,12 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
                 )
             except Exception as e:
                 chat_name = chat['custom_name'] or chat['original_title']
-                print(f"[Negativists] ERROR fetching Max messages from {chat_name}: {e}", flush=True)
+                print(
+                    f"[Negativists] ERROR fetching Max messages from {chat_name}: {e}\n"
+                    f"[Negativists] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                    flush=True
+                )
+                traceback.print_exc()
                 raise HTTPException(
                     status_code=500,
                     detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
@@ -629,7 +664,12 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
                 )
             except Exception as e:
                 chat_name = chat['custom_name'] or chat['original_title']
-                print(f"[Negativists] ERROR fetching messages from {chat_name}: {e}", flush=True)
+                print(
+                    f"[Negativists] ERROR fetching messages from {chat_name}: {e}\n"
+                    f"[Negativists] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                    flush=True
+                )
+                traceback.print_exc()
                 raise HTTPException(
                     status_code=500,
                     detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."

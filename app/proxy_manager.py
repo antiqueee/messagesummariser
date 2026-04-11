@@ -4,6 +4,7 @@ Handles MTProto and SOCKS5 proxies with automatic failover.
 """
 
 import asyncio
+import base64
 import time
 import random
 from dataclasses import dataclass
@@ -84,11 +85,48 @@ class ProxyManager:
     def current_proxy(self) -> Optional[ProxyConfig]:
         return self._current_proxy
 
+    def _normalize_mtproto_secret(self, secret: Optional[str]) -> Optional[str]:
+        """
+        Normalize MTProto secret to hex format supported by this Telethon version.
+        Returns normalized hex string or None if the proxy is unsupported.
+        """
+        if not secret:
+            return None
+
+        if all(c in '0123456789abcdefABCDEF' for c in secret) and len(secret) % 2 == 0:
+            return secret.lower()
+
+        try:
+            padded = secret + ('=' * ((4 - len(secret) % 4) % 4))
+            decoded = base64.urlsafe_b64decode(padded)
+        except Exception:
+            return None
+
+        # This Telethon build supports only classic 16-byte secrets and dd-secrets.
+        if len(decoded) == 16:
+            return decoded.hex()
+        if len(decoded) == 17 and decoded[0] == 0xDD:
+            return decoded.hex()
+        return None
+
+    def _is_supported_proxy(self, proxy: ProxyConfig) -> bool:
+        """Check whether proxy config is usable by the current Telethon client."""
+        if proxy.type != 'mtproto':
+            return True
+        return self._normalize_mtproto_secret(proxy.secret) is not None
+
     async def check_proxy(self, proxy: ProxyConfig, timeout: float = 5.0) -> bool:
         """
         Check if a proxy is working by attempting a TCP connection.
         Returns True if proxy responds, False otherwise.
         """
+        if not self._is_supported_proxy(proxy):
+            proxy.is_working = False
+            proxy.latency = None
+            proxy.last_check = time.time()
+            print(f"[ProxyManager] Skipping unsupported proxy config: {proxy}", flush=True)
+            return False
+
         start_time = time.time()
         try:
             # Simple TCP connect check
@@ -177,10 +215,14 @@ class ProxyManager:
         Returns dict with 'proxy' and optionally 'connection' keys.
         """
         if proxy.type == 'mtproto':
+            secret = self._normalize_mtproto_secret(proxy.secret)
+            if not secret:
+                print(f"[ProxyManager] Unsupported MTProto secret format for {proxy}, skipping", flush=True)
+                return {}
             from telethon.network import connection
             return {
                 'connection': connection.ConnectionTcpMTProxyRandomizedIntermediate,
-                'proxy': (proxy.host, proxy.port, proxy.secret)
+                'proxy': (proxy.host, proxy.port, secret)
             }
         else:  # socks5
             try:

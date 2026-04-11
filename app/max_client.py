@@ -16,6 +16,7 @@ class MaxClientManager:
         self._tasks: dict[int, asyncio.Task] = {}  # account_id -> background task
         self._locks: dict[int, asyncio.Lock] = {}
         self._ready: dict[int, asyncio.Event] = {}  # signals when client is connected
+        self._phones: dict[int, str] = {}
 
     def _get_lock(self, account_id: int) -> asyncio.Lock:
         if account_id not in self._locks:
@@ -27,9 +28,19 @@ class MaxClientManager:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def _is_socket_connected(self, account_id: int) -> bool:
+        client = self._clients.get(account_id)
+        return bool(client and getattr(client, "is_connected", False))
+
+    def _mark_disconnected(self, account_id: int) -> None:
+        if account_id in self._ready:
+            self._ready[account_id].clear()
+
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
+            self._phones[account_id] = phone
+
             # Stop existing client if any
             if account_id in self._tasks:
                 self._tasks[account_id].cancel()
@@ -47,7 +58,7 @@ class MaxClientManager:
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
-                    reconnect=False,  # Disable auto-reconnect to prevent duplicate chats and crashes
+                    reconnect=True,
                 )
 
                 self._clients[account_id] = client
@@ -73,10 +84,9 @@ class MaxClientManager:
                         import traceback
                         traceback.print_exc()
                     finally:
-                        # Connection dropped — clear ready so ensure_connected will reconnect
-                        if account_id in self._ready:
-                            self._ready[account_id].clear()
-                        print(f"[MaxClient] Client {account_id} disconnected, will reconnect on next use", flush=True)
+                        # start() exited fully — mark client unavailable until it is started again.
+                        self._mark_disconnected(account_id)
+                        print(f"[MaxClient] Client {account_id} stopped", flush=True)
 
                 self._tasks[account_id] = asyncio.create_task(run_client())
 
@@ -102,19 +112,27 @@ class MaxClientManager:
 
     async def ensure_connected(self, account_id: int, phone: str) -> bool:
         """Ensure client is connected. Auto-start if needed. Returns True if connected."""
+        self._phones[account_id] = phone
+
         # Check if task is still alive AND ready
         task_alive = account_id in self._tasks and not self._tasks[account_id].done()
         is_ready = account_id in self._ready and self._ready[account_id].is_set()
+        socket_connected = self._is_socket_connected(account_id)
 
-        if task_alive and is_ready:
+        if task_alive and is_ready and socket_connected:
             return True
+
+        # Client exists but socket has dropped - force a reconnect
+        if task_alive and is_ready and not socket_connected:
+            print(f"[MaxClient] Client {account_id} lost socket connection, restarting", flush=True)
+            self._mark_disconnected(account_id)
 
         # Client exists but not ready yet - wait a bit
         if task_alive and not is_ready:
             try:
                 if account_id in self._ready:
                     await asyncio.wait_for(self._ready[account_id].wait(), timeout=15.0)
-                    return True
+                    return self._is_socket_connected(account_id)
             except asyncio.TimeoutError:
                 return False
 
@@ -127,7 +145,7 @@ class MaxClientManager:
         """Check if client is actually connected (task alive + ready)"""
         task_alive = account_id in self._tasks and not self._tasks[account_id].done()
         is_ready = account_id in self._ready and self._ready[account_id].is_set()
-        return task_alive and is_ready
+        return task_alive and is_ready and self._is_socket_connected(account_id)
 
     async def get_dialogs(self, account_id: int, include_private: bool = False) -> list[dict]:
         """Get group chats from Max account.
@@ -152,7 +170,7 @@ class MaxClientManager:
         result = []
         seen_ids = set()
         try:
-            is_connected = getattr(client, 'is_connected', False)
+            is_connected = self._is_socket_connected(account_id)
             print(f"[MaxClient] Client connected: {is_connected}", flush=True)
 
             # Group chats - have .id and .title (deduplicate by id)
@@ -213,9 +231,12 @@ class MaxClientManager:
             print(f"[MaxClient] No client for account {account_id}", flush=True)
             return []
 
-        # Check if client is ready
-        if account_id in self._ready and not self._ready[account_id].is_set():
-            print(f"[MaxClient] Client {account_id} not yet connected", flush=True)
+        if not await self._ensure_runtime_connection(account_id):
+            print(f"[MaxClient] Client {account_id} not connected", flush=True)
+            return []
+
+        client = self._clients.get(account_id)
+        if not client:
             return []
 
         start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
@@ -226,7 +247,29 @@ class MaxClientManager:
         messages = []
         try:
             history = await client.fetch_history(chat_id=chat_id)
+        except Exception as e:
+            if e.__class__.__name__ == "SocketNotConnectedError":
+                print(f"[MaxClient] Socket dropped for account {account_id}, reconnecting and retrying", flush=True)
+                self._mark_disconnected(account_id)
+                if not await self._ensure_runtime_connection(account_id, force_restart=True):
+                    return []
+                client = self._clients.get(account_id)
+                if not client:
+                    return []
+                try:
+                    history = await client.fetch_history(chat_id=chat_id)
+                except Exception as retry_error:
+                    print(f"[MaxClient] Retry failed fetching messages: {retry_error}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return []
+            else:
+                print(f"[MaxClient] Error fetching messages: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                return []
 
+        try:
             for msg in history:
                 if not hasattr(msg, 'text') or not msg.text:
                     continue
@@ -301,10 +344,27 @@ class MaxClientManager:
             if account_id in self._ready:
                 del self._ready[account_id]
 
+            if account_id in self._phones:
+                del self._phones[account_id]
+
     async def close_all(self):
         """Close all Max client connections"""
         for account_id in list(self._clients.keys()):
             await self.disconnect_account(account_id)
+
+    async def _ensure_runtime_connection(self, account_id: int, force_restart: bool = False) -> bool:
+        if force_restart and account_id in self._tasks:
+            await self.disconnect_account(account_id)
+
+        if self._is_socket_connected(account_id):
+            return True
+
+        phone = self._phones.get(account_id)
+        if not phone:
+            print(f"[MaxClient] Missing phone for account {account_id}, cannot reconnect", flush=True)
+            return False
+
+        return await self.ensure_connected(account_id, phone)
 
 
 # Global instance

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, AsyncGenerator
@@ -20,7 +21,6 @@ CONNECTION_ERRORS = (
     TimeoutError,
     OSError,
     asyncio.TimeoutError,
-    asyncio.CancelledError,
 )
 
 
@@ -73,6 +73,17 @@ class TelegramClientManager:
 
         return TelegramClient(**kwargs)
 
+    async def _safe_disconnect(self, client: Optional[TelegramClient]):
+        """Best-effort disconnect that preserves task cancellation."""
+        if not client:
+            return
+        try:
+            await client.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
     async def get_client(self, account_id: int, max_retries: int = 3) -> Optional[TelegramClient]:
         """Get or create a client for the given account with automatic proxy failover"""
         # Quick check without lock
@@ -102,6 +113,7 @@ class TelegramClientManager:
 
             for attempt in range(max_retries):
                 proxy = pm.current_proxy if pm else None
+                client = None
 
                 try:
                     client = self._create_client(str(session_path), proxy)
@@ -116,11 +128,7 @@ class TelegramClientManager:
                     last_error = e
                     print(f"[TelegramClient] Connection failed (attempt {attempt + 1}/{max_retries}): {e}", flush=True)
 
-                    if client:
-                        try:
-                            await client.disconnect()
-                        except:
-                            pass
+                    await self._safe_disconnect(client)
 
                     # Try next proxy
                     if pm:
@@ -130,10 +138,15 @@ class TelegramClientManager:
                         else:
                             print("[TelegramClient] No more proxies available", flush=True)
                             break
+                except asyncio.CancelledError:
+                    print(f"[TelegramClient] Connection cancelled for account {account_id}", flush=True)
+                    await self._safe_disconnect(client)
+                    raise
 
             # Fallback: try direct connection without proxy
             if last_error and self.use_proxy:
                 print(f"[TelegramClient] All proxies failed, trying direct connection...", flush=True)
+                client = None
                 try:
                     client = self._create_client(str(session_path), proxy=None)
                     await asyncio.wait_for(client.connect(), timeout=30)
@@ -144,12 +157,13 @@ class TelegramClientManager:
                         return client
                     return None
 
+                except asyncio.CancelledError:
+                    print(f"[TelegramClient] Direct connection cancelled for account {account_id}", flush=True)
+                    await self._safe_disconnect(client)
+                    raise
                 except Exception as e:
                     print(f"[TelegramClient] Direct connection also failed: {e}", flush=True)
-                    try:
-                        await client.disconnect()
-                    except:
-                        pass
+                    await self._safe_disconnect(client)
 
             if last_error:
                 print(f"[TelegramClient] All connection attempts failed: {last_error}", flush=True)
@@ -192,11 +206,7 @@ class TelegramClientManager:
                     last_error = e
                     print(f"[Auth] Connection failed (attempt {attempt + 1}/{max_retries}): {e}", flush=True)
 
-                    if client:
-                        try:
-                            await client.disconnect()
-                        except:
-                            pass
+                    await self._safe_disconnect(client)
 
                     # Try next proxy
                     if pm:
@@ -206,16 +216,20 @@ class TelegramClientManager:
                         else:
                             print("[Auth] No more proxies available", flush=True)
                             break
+                except asyncio.CancelledError:
+                    print(f"[Auth] Authentication cancelled for account {account_id}", flush=True)
+                    await self._safe_disconnect(client)
+                    raise
 
                 except Exception as e:
                     print(f"[Auth] ERROR sending code: {e}")
-                    import traceback
                     traceback.print_exc()
                     raise
 
             # Fallback: try direct connection without proxy
             if last_error and self.use_proxy:
                 print(f"[Auth] All proxies failed, trying direct connection...", flush=True)
+                client = None
                 try:
                     client = self._create_client(str(session_path), proxy=None)
                     await asyncio.wait_for(client.connect(), timeout=30)
@@ -232,13 +246,13 @@ class TelegramClientManager:
 
                     return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
 
+                except asyncio.CancelledError:
+                    print(f"[Auth] Direct authentication connection cancelled for account {account_id}", flush=True)
+                    await self._safe_disconnect(client)
+                    raise
                 except Exception as e:
                     print(f"[Auth] Direct connection also failed: {e}", flush=True)
-                    try:
-                        if client:
-                            await client.disconnect()
-                    except:
-                        pass
+                    await self._safe_disconnect(client)
 
             # All attempts failed
             raise ConnectionError(f"Failed to connect after {max_retries} attempts: {last_error}")
@@ -397,7 +411,14 @@ class TelegramClientManager:
         end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
 
         topic_filter = set(topic_ids) if topic_ids else None
-        print(f"[get_messages] chat={chat_telegram_id}, period={start_naive} - {end_naive}, topics={topic_filter}", flush=True)
+        print(
+            f"[get_messages] account_id={account_id}, "
+            f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
+            f"period={start_naive} - {end_naive}, "
+            f"topics={topic_filter}, "
+            f"limit={limit}, timeout={timeout_seconds}",
+            flush=True
+        )
 
         messages = []
 
@@ -474,8 +495,14 @@ class TelegramClientManager:
             print(f"[get_messages] Timeout after {timeout_seconds}s, got {len(messages)} messages so far", flush=True)
 
         except Exception as e:
-            print(f"[get_messages] Error fetching messages: {e}", flush=True)
-            import traceback
+            print(
+                f"[get_messages] Error fetching messages: {e}\n"
+                f"[get_messages] Context: account_id={account_id}, "
+                f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
+                f"start={start_naive!r}, end={end_naive!r}, "
+                f"topic_ids={topic_ids!r}, fetched_so_far={len(messages)}",
+                flush=True
+            )
             traceback.print_exc()
             return []
 
