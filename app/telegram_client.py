@@ -20,6 +20,7 @@ CONNECTION_ERRORS = (
     TimeoutError,
     OSError,
     asyncio.TimeoutError,
+    asyncio.CancelledError,
 )
 
 
@@ -130,6 +131,26 @@ class TelegramClientManager:
                             print("[TelegramClient] No more proxies available", flush=True)
                             break
 
+            # Fallback: try direct connection without proxy
+            if last_error and self.use_proxy:
+                print(f"[TelegramClient] All proxies failed, trying direct connection...", flush=True)
+                try:
+                    client = self._create_client(str(session_path), proxy=None)
+                    await asyncio.wait_for(client.connect(), timeout=30)
+
+                    if await client.is_user_authorized():
+                        self._clients[account_id] = client
+                        print(f"[TelegramClient] Direct connection successful!", flush=True)
+                        return client
+                    return None
+
+                except Exception as e:
+                    print(f"[TelegramClient] Direct connection also failed: {e}", flush=True)
+                    try:
+                        await client.disconnect()
+                    except:
+                        pass
+
             if last_error:
                 print(f"[TelegramClient] All connection attempts failed: {last_error}", flush=True)
             return None
@@ -191,6 +212,33 @@ class TelegramClientManager:
                     import traceback
                     traceback.print_exc()
                     raise
+
+            # Fallback: try direct connection without proxy
+            if last_error and self.use_proxy:
+                print(f"[Auth] All proxies failed, trying direct connection...", flush=True)
+                try:
+                    client = self._create_client(str(session_path), proxy=None)
+                    await asyncio.wait_for(client.connect(), timeout=30)
+                    print(f"[Auth] Direct connection successful!")
+
+                    result = await client.send_code_request(phone)
+                    print(f"[Auth] Code sent! Type: {result.type}")
+
+                    self._pending_auth[account_id] = {
+                        'client': client,
+                        'phone': phone,
+                        'phone_code_hash': result.phone_code_hash
+                    }
+
+                    return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
+
+                except Exception as e:
+                    print(f"[Auth] Direct connection also failed: {e}", flush=True)
+                    try:
+                        if client:
+                            await client.disconnect()
+                    except:
+                        pass
 
             # All attempts failed
             raise ConnectionError(f"Failed to connect after {max_retries} attempts: {last_error}")

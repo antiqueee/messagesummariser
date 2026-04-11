@@ -451,13 +451,21 @@ async def generate_report(data: GenerateReportRequest):
                 except RuntimeError:
                     messages = []
             else:
-                messages = await tm.get_messages(
-                    account_id=chat['account_id'],
-                    chat_telegram_id=chat['telegram_id'],
-                    start_date=start_date,
-                    end_date=end_date,
-                    topic_ids=topic_ids
-                )
+                try:
+                    messages = await tm.get_messages(
+                        account_id=chat['account_id'],
+                        chat_telegram_id=chat['telegram_id'],
+                        start_date=start_date,
+                        end_date=end_date,
+                        topic_ids=topic_ids
+                    )
+                except Exception as e:
+                    chat_name = chat['custom_name'] or chat['original_title']
+                    print(f"[Report] ERROR fetching messages from {chat_name}: {e}", flush=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."
+                    )
 
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
@@ -594,13 +602,21 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             except RuntimeError:
                 messages = []
         else:
-            messages = await tm.get_messages(
-                account_id=chat['account_id'],
-                chat_telegram_id=chat['telegram_id'],
-                start_date=start_date,
-                end_date=end_date,
-                topic_ids=topic_ids
-            )
+            try:
+                messages = await tm.get_messages(
+                    account_id=chat['account_id'],
+                    chat_telegram_id=chat['telegram_id'],
+                    start_date=start_date,
+                    end_date=end_date,
+                    topic_ids=topic_ids
+                )
+            except Exception as e:
+                chat_name = chat['custom_name'] or chat['original_title']
+                print(f"[Negativists] ERROR fetching messages from {chat_name}: {e}", flush=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."
+                )
 
         chat_name = chat['custom_name'] or chat['original_title']
         content_filter = chat.get('content_filter', '')
