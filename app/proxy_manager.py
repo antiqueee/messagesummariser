@@ -183,10 +183,14 @@ class ProxyManager:
                 'proxy': (proxy.host, proxy.port, proxy.secret)
             }
         else:  # socks5
-            import socks
-            return {
-                'proxy': (socks.SOCKS5, proxy.host, proxy.port, True, proxy.username, proxy.password)
-            }
+            try:
+                import socks
+                return {
+                    'proxy': (socks.SOCKS5, proxy.host, proxy.port, True, proxy.username, proxy.password)
+                }
+            except ImportError:
+                print("[ProxyManager] WARNING: pysocks not installed, SOCKS proxy unavailable. Run: pip install pysocks", flush=True)
+                return {}
 
 
 # Global instance
