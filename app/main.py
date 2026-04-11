@@ -70,8 +70,22 @@ async def lifespan(app: FastAPI):
         init_telegram_manager(int(api_id), api_hash)
 
     # Initialize Max messenger manager
-    init_max_manager()
+    mm = init_max_manager()
     print("[Max] Max messenger manager initialized")
+
+    # Auto-start authorized Max accounts (reconnect with cached sessions)
+    try:
+        max_accounts = await db.get_max_accounts()
+        for acc in max_accounts:
+            if acc['is_authorized']:
+                try:
+                    result = await mm.start_auth(acc['id'], acc['phone'])
+                    status = result.get('status', 'unknown')
+                    print(f"[Max] Auto-start account {acc['id']} ({acc['name']}): {status}", flush=True)
+                except Exception as e:
+                    print(f"[Max] Failed to auto-start account {acc['id']}: {e}", flush=True)
+    except Exception as e:
+        print(f"[Max] Error auto-starting accounts: {e}", flush=True)
 
     if openrouter_key:
         try:
@@ -413,7 +427,7 @@ async def generate_report(data: GenerateReportRequest):
                     pass
 
             # Get messages from appropriate source
-            source = chat.get('source', 'telegram')
+            source = chat.get('source') or 'telegram'
             if source == 'max':
                 try:
                     mm = get_max_manager()
@@ -549,7 +563,7 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
                 pass
 
         # Get messages from appropriate source
-        source = chat.get('source', 'telegram')
+        source = chat.get('source') or 'telegram'
         if source == 'max':
             try:
                 mm = get_max_manager()
@@ -705,6 +719,15 @@ async def sync_max_chats(account_id: int):
 
     try:
         mm = get_max_manager()
+
+        # Auto-connect if client is not running
+        connected = await mm.ensure_connected(account_id, account['phone'])
+        if not connected:
+            raise HTTPException(
+                status_code=400,
+                detail="Клиент Max не подключен. Нажмите 'Авторизовать' и дождитесь подключения."
+            )
+
         dialogs = await mm.get_dialogs(account_id)
 
         synced = 0
@@ -717,6 +740,8 @@ async def sync_max_chats(account_id: int):
             synced += 1
 
         return {"message": f"Синхронизировано чатов: {synced}", "count": synced}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

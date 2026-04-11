@@ -353,7 +353,7 @@ async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
                    COALESCE(a.phone, ma.phone) as account_phone
             FROM chats c
             JOIN complexes cx ON c.complex_id = cx.id
-            LEFT JOIN accounts a ON c.account_id = a.id AND c.source = 'telegram'
+            LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
             LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
             WHERE c.is_monitored = 1 AND c.complex_id IS NOT NULL
             ORDER BY cx.sort_order, cx.name, c.original_title

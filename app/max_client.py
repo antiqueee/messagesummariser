@@ -55,7 +55,9 @@ class MaxClientManager:
                 # Register on_start handler to know when connected
                 @client.on_start
                 async def on_start():
-                    print(f"[MaxClient] Account {account_id} connected!", flush=True)
+                    print(f"[MaxClient] Account {account_id} connected and synced!", flush=True)
+                    # Small delay to let pymax populate chats/dialogs after sync
+                    await asyncio.sleep(1.0)
                     self._ready[account_id].set()
 
                 # Start client in background task
@@ -74,7 +76,7 @@ class MaxClientManager:
 
                 # Wait a bit to see if it connects quickly (cached session)
                 try:
-                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=5.0)
+                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=10.0)
                     return {'status': 'success', 'message': 'Max аккаунт подключен (сессия из кеша)'}
                 except asyncio.TimeoutError:
                     # Not connected yet - needs auth
@@ -85,12 +87,32 @@ class MaxClientManager:
 
             except ImportError as ie:
                 raise RuntimeError(
-                    f"maxapi-python not installed ({ie}). Run: pip install -U maxapi-python"
+                    f"maxapi-python не установлен ({ie}). Запустите: pip install -U maxapi-python"
                 )
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                raise RuntimeError(f"Max auth error: {e}")
+                raise RuntimeError(f"Ошибка авторизации Max: {e}")
+
+    async def ensure_connected(self, account_id: int, phone: str) -> bool:
+        """Ensure client is connected. Auto-start if needed. Returns True if connected."""
+        # Already connected
+        if account_id in self._ready and self._ready[account_id].is_set():
+            return True
+
+        # Client exists but not ready yet - wait a bit
+        if account_id in self._tasks and not self._tasks[account_id].done():
+            try:
+                if account_id in self._ready:
+                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=15.0)
+                    return True
+            except asyncio.TimeoutError:
+                return False
+
+        # No client running - auto-start with cached session
+        print(f"[MaxClient] Auto-starting client for account {account_id}", flush=True)
+        result = await self.start_auth(account_id, phone)
+        return result.get('status') == 'success'
 
     async def check_connected(self, account_id: int) -> bool:
         """Check if client is connected"""
@@ -108,12 +130,20 @@ class MaxClientManager:
             print(f"[MaxClient] No client for account {account_id}", flush=True)
             return []
 
+        # Wait for client to be ready if it's still connecting
         if account_id in self._ready and not self._ready[account_id].is_set():
-            print(f"[MaxClient] Client {account_id} not yet connected", flush=True)
-            return []
+            print(f"[MaxClient] Waiting for client {account_id} to connect...", flush=True)
+            try:
+                await asyncio.wait_for(self._ready[account_id].wait(), timeout=20.0)
+            except asyncio.TimeoutError:
+                print(f"[MaxClient] Timeout waiting for client {account_id}", flush=True)
+                return []
 
         result = []
         try:
+            is_connected = getattr(client, 'is_connected', False)
+            print(f"[MaxClient] Client connected: {is_connected}", flush=True)
+
             # Group chats - have .id and .title
             chats = getattr(client, 'chats', []) or []
             print(f"[MaxClient] Found {len(chats)} group chats", flush=True)
@@ -132,8 +162,6 @@ class MaxClientManager:
             print(f"[MaxClient] Found {len(dialogs)} private dialogs", flush=True)
             for dialog in dialogs:
                 dialog_id = getattr(dialog, 'id', 0)
-                # Dialogs don't have title, use owner id or participants
-                owner = getattr(dialog, 'owner', 0)
                 title = f"Диалог {dialog_id}"
                 result.append({
                     'chat_id': int(dialog_id),
