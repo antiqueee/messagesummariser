@@ -47,6 +47,7 @@ class MaxClientManager:
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
+                    reconnect=False,  # Disable auto-reconnect to prevent duplicate chats and crashes
                 )
 
                 self._clients[account_id] = client
@@ -141,32 +142,39 @@ class MaxClientManager:
                 return []
 
         result = []
+        seen_ids = set()
         try:
             is_connected = getattr(client, 'is_connected', False)
             print(f"[MaxClient] Client connected: {is_connected}", flush=True)
 
-            # Group chats - have .id and .title
+            # Group chats - have .id and .title (deduplicate by id)
             chats = getattr(client, 'chats', []) or []
-            print(f"[MaxClient] Found {len(chats)} group chats", flush=True)
+            print(f"[MaxClient] Found {len(chats)} group chat entries (may include duplicates)", flush=True)
             for chat in chats:
-                chat_id = getattr(chat, 'id', 0)
+                chat_id = int(getattr(chat, 'id', 0))
+                if chat_id in seen_ids:
+                    continue
+                seen_ids.add(chat_id)
                 title = getattr(chat, 'title', None) or f"Chat {chat_id}"
                 chat_type = getattr(chat, 'type', 'group')
                 result.append({
-                    'chat_id': int(chat_id),
+                    'chat_id': chat_id,
                     'title': str(title),
                     'type': str(chat_type),
                 })
 
-            # Private dialogs - only if requested
+            # Private dialogs - only if requested (deduplicate by id)
             if include_private:
                 dialogs = getattr(client, 'dialogs', []) or []
-                print(f"[MaxClient] Found {len(dialogs)} private dialogs", flush=True)
+                print(f"[MaxClient] Found {len(dialogs)} private dialog entries", flush=True)
                 for dialog in dialogs:
-                    dialog_id = getattr(dialog, 'id', 0)
+                    dialog_id = int(getattr(dialog, 'id', 0))
+                    if dialog_id in seen_ids:
+                        continue
+                    seen_ids.add(dialog_id)
                     title = f"Диалог {dialog_id}"
                     result.append({
-                        'chat_id': int(dialog_id),
+                        'chat_id': dialog_id,
                         'title': title,
                         'type': 'dialog',
                     })
@@ -174,7 +182,7 @@ class MaxClientManager:
                 dialogs = getattr(client, 'dialogs', []) or []
                 print(f"[MaxClient] Skipping {len(dialogs)} private dialogs", flush=True)
 
-            print(f"[MaxClient] Total: {len(result)} chats synced", flush=True)
+            print(f"[MaxClient] Total unique: {len(result)} chats", flush=True)
 
         except Exception as e:
             print(f"[MaxClient] Error getting dialogs: {e}", flush=True)
