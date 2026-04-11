@@ -1,6 +1,36 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
+import re
+
+
+def parse_flexible_datetime(value) -> datetime:
+    """Parse datetime from various string formats"""
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Expected string or datetime, got {type(value)}")
+
+    value = value.strip()
+
+    # ISO format: 2026-04-11T12:30:00, 2026-04-11T12:30, 2026-04-11 12:30:00
+    for fmt in [
+        '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M:%S.%f',
+    ]:
+        try:
+            return datetime.strptime(value.rstrip('Z'), fmt)
+        except ValueError:
+            continue
+
+    # DD.MM.YYYY HH:MM or DD/MM/YYYY HH:MM
+    m = re.match(r'(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?', value)
+    if m:
+        day, month, year, hour, minute = int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5])
+        second = int(m[6]) if m[6] else 0
+        return datetime(year, month, day, hour, minute, second)
+
+    raise ValueError(f"Cannot parse datetime: {value}")
 
 
 class TelegramAccount(BaseModel):
@@ -101,14 +131,38 @@ class ChatUpdateRequest(BaseModel):
 
 class GenerateReportRequest(BaseModel):
     complex_ids: list[int]
-    start_date: datetime
-    end_date: datetime
+    start_date: str
+    end_date: str
+
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_dates(cls, v):
+        parse_flexible_datetime(v)  # Validate but keep as string
+        return v
+
+    def get_start_date(self) -> datetime:
+        return parse_flexible_datetime(self.start_date)
+
+    def get_end_date(self) -> datetime:
+        return parse_flexible_datetime(self.end_date)
 
 
 class AnalyzeNegativistsRequest(BaseModel):
     chat_ids: list[int]
-    start_date: datetime
-    end_date: datetime
+    start_date: str
+    end_date: str
+
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_dates(cls, v):
+        parse_flexible_datetime(v)
+        return v
+
+    def get_start_date(self) -> datetime:
+        return parse_flexible_datetime(self.start_date)
+
+    def get_end_date(self) -> datetime:
+        return parse_flexible_datetime(self.end_date)
 
 
 # Max messenger models

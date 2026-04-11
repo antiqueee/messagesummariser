@@ -1283,9 +1283,19 @@
         // Chats
         async function loadAccountsForFilter() {
             const select = document.getElementById('chats-account-filter');
-            const data = await api('/api/accounts');
-            select.innerHTML = '<option value="">Все аккаунты</option>' +
-                data.accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+            try {
+                const [tgData, maxData] = await Promise.all([
+                    api('/api/accounts'),
+                    api('/api/max/accounts')
+                ]);
+                let options = '<option value="">Все аккаунты</option>';
+                if (tgData.accounts.length > 0) {
+                    options += tgData.accounts.map(a => `<option value="${a.id}">TG: ${a.name}</option>`).join('');
+                }
+                select.innerHTML = options;
+            } catch (e) {
+                select.innerHTML = '<option value="">Все аккаунты</option>';
+            }
         }
 
         async function loadComplexesForFilter() {

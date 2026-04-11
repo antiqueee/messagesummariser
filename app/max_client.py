@@ -120,10 +120,11 @@ class MaxClientManager:
             return self._ready[account_id].is_set()
         return False
 
-    async def get_dialogs(self, account_id: int) -> list[dict]:
-        """Get all dialogs (chats) from Max account.
+    async def get_dialogs(self, account_id: int, include_private: bool = False) -> list[dict]:
+        """Get group chats from Max account.
         pymax stores group chats in client.chats (Chat objects with .id, .title)
-        and private dialogs in client.dialogs (Dialog objects with .id, no .title)
+        and private dialogs in client.dialogs (Dialog objects with .id, no .title).
+        By default only returns group chats.
         """
         client = self._clients.get(account_id)
         if not client:
@@ -157,19 +158,23 @@ class MaxClientManager:
                     'type': str(chat_type),
                 })
 
-            # Private dialogs - have .id but no .title
-            dialogs = getattr(client, 'dialogs', []) or []
-            print(f"[MaxClient] Found {len(dialogs)} private dialogs", flush=True)
-            for dialog in dialogs:
-                dialog_id = getattr(dialog, 'id', 0)
-                title = f"Диалог {dialog_id}"
-                result.append({
-                    'chat_id': int(dialog_id),
-                    'title': title,
-                    'type': 'dialog',
-                })
+            # Private dialogs - only if requested
+            if include_private:
+                dialogs = getattr(client, 'dialogs', []) or []
+                print(f"[MaxClient] Found {len(dialogs)} private dialogs", flush=True)
+                for dialog in dialogs:
+                    dialog_id = getattr(dialog, 'id', 0)
+                    title = f"Диалог {dialog_id}"
+                    result.append({
+                        'chat_id': int(dialog_id),
+                        'title': title,
+                        'type': 'dialog',
+                    })
+            else:
+                dialogs = getattr(client, 'dialogs', []) or []
+                print(f"[MaxClient] Skipping {len(dialogs)} private dialogs", flush=True)
 
-            print(f"[MaxClient] Total: {len(result)} chats/dialogs", flush=True)
+            print(f"[MaxClient] Total: {len(result)} chats synced", flush=True)
 
         except Exception as e:
             print(f"[MaxClient] Error getting dialogs: {e}", flush=True)

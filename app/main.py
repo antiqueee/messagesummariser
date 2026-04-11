@@ -159,7 +159,11 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    from fastapi.responses import HTMLResponse as HR
+    response = templates.TemplateResponse("index.html", {"request": request})
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 # ============== Account Endpoints ==============
@@ -369,6 +373,13 @@ async def generate_report(data: GenerateReportRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Parse dates
+    try:
+        start_date = data.get_start_date()
+        end_date = data.get_end_date()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Неверный формат даты: {e}")
+
     # Check if AI summarizer is available
     summarizer = None
     try:
@@ -391,8 +402,8 @@ async def generate_report(data: GenerateReportRequest):
 
     report = {
         'generated_at': datetime.now().isoformat(),
-        'period_start': data.start_date.isoformat(),
-        'period_end': data.end_date.isoformat(),
+        'period_start': start_date.isoformat(),
+        'period_end': end_date.isoformat(),
         'mode': 'ai' if summarizer else 'raw',
         'complexes': []
     }
@@ -434,8 +445,8 @@ async def generate_report(data: GenerateReportRequest):
                     messages = await mm.get_messages(
                         account_id=chat['max_account_id'],
                         chat_id=chat['telegram_id'],
-                        start_date=data.start_date,
-                        end_date=data.end_date,
+                        start_date=start_date,
+                        end_date=end_date,
                     )
                 except RuntimeError:
                     messages = []
@@ -443,8 +454,8 @@ async def generate_report(data: GenerateReportRequest):
                 messages = await tm.get_messages(
                     account_id=chat['account_id'],
                     chat_telegram_id=chat['telegram_id'],
-                    start_date=data.start_date,
-                    end_date=data.end_date,
+                    start_date=start_date,
+                    end_date=end_date,
                     topic_ids=topic_ids
                 )
 
@@ -479,8 +490,8 @@ async def generate_report(data: GenerateReportRequest):
                 summary_text = await summarizer.summarize_complex(
                     complex_name=complex_name,
                     chats_with_messages=chats_with_messages,
-                    start_date=data.start_date,
-                    end_date=data.end_date,
+                    start_date=start_date,
+                    end_date=end_date,
                     rules=rules
                 )
                 complex_data['summary'] = summary_text
@@ -545,6 +556,13 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
     except RuntimeError:
         raise HTTPException(status_code=400, detail="Telegram не настроен")
 
+    # Parse dates
+    try:
+        start_date = data.get_start_date()
+        end_date = data.get_end_date()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Неверный формат даты: {e}")
+
     # Get selected chats
     chats_with_messages = []
 
@@ -570,8 +588,8 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
                 messages = await mm.get_messages(
                     account_id=chat['max_account_id'],
                     chat_id=chat['telegram_id'],
-                    start_date=data.start_date,
-                    end_date=data.end_date,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
             except RuntimeError:
                 messages = []
@@ -579,8 +597,8 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             messages = await tm.get_messages(
                 account_id=chat['account_id'],
                 chat_telegram_id=chat['telegram_id'],
-                start_date=data.start_date,
-                end_date=data.end_date,
+                start_date=start_date,
+                end_date=end_date,
                 topic_ids=topic_ids
             )
 
@@ -598,14 +616,14 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
     # Analyze with AI
     result = await summarizer.analyze_negativists(
         chats_with_messages=chats_with_messages,
-        start_date=data.start_date,
-        end_date=data.end_date,
+        start_date=start_date,
+        end_date=end_date,
         rules=rules
     )
 
     return {
-        'period_start': data.start_date.isoformat(),
-        'period_end': data.end_date.isoformat(),
+        'period_start': start_date.isoformat(),
+        'period_end': end_date.isoformat(),
         'negativists': result.get('negativists', []),
         'analysis_notes': result.get('analysis_notes')
     }
