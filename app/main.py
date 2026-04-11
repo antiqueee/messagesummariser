@@ -442,14 +442,23 @@ async def generate_report(data: GenerateReportRequest):
             if source == 'max':
                 try:
                     mm = get_max_manager()
+                    # Auto-reconnect if connection dropped
+                    max_acc = await db.get_max_account(chat['max_account_id'])
+                    if max_acc:
+                        await mm.ensure_connected(chat['max_account_id'], max_acc['phone'])
                     messages = await mm.get_messages(
                         account_id=chat['max_account_id'],
                         chat_id=chat['telegram_id'],
                         start_date=start_date,
                         end_date=end_date,
                     )
-                except RuntimeError:
-                    messages = []
+                except Exception as e:
+                    chat_name = chat['custom_name'] or chat['original_title']
+                    print(f"[Report] ERROR fetching Max messages from {chat_name}: {e}", flush=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
+                    )
             else:
                 try:
                     messages = await tm.get_messages(
@@ -593,14 +602,22 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
         if source == 'max':
             try:
                 mm = get_max_manager()
+                max_acc = await db.get_max_account(chat['max_account_id'])
+                if max_acc:
+                    await mm.ensure_connected(chat['max_account_id'], max_acc['phone'])
                 messages = await mm.get_messages(
                     account_id=chat['max_account_id'],
                     chat_id=chat['telegram_id'],
                     start_date=start_date,
                     end_date=end_date,
                 )
-            except RuntimeError:
-                messages = []
+            except Exception as e:
+                chat_name = chat['custom_name'] or chat['original_title']
+                print(f"[Negativists] ERROR fetching Max messages from {chat_name}: {e}", flush=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
+                )
         else:
             try:
                 messages = await tm.get_messages(

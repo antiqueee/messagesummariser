@@ -72,6 +72,11 @@ class MaxClientManager:
                         print(f"[MaxClient] Client {account_id} error: {e}", flush=True)
                         import traceback
                         traceback.print_exc()
+                    finally:
+                        # Connection dropped — clear ready so ensure_connected will reconnect
+                        if account_id in self._ready:
+                            self._ready[account_id].clear()
+                        print(f"[MaxClient] Client {account_id} disconnected, will reconnect on next use", flush=True)
 
                 self._tasks[account_id] = asyncio.create_task(run_client())
 
@@ -97,12 +102,15 @@ class MaxClientManager:
 
     async def ensure_connected(self, account_id: int, phone: str) -> bool:
         """Ensure client is connected. Auto-start if needed. Returns True if connected."""
-        # Already connected
-        if account_id in self._ready and self._ready[account_id].is_set():
+        # Check if task is still alive AND ready
+        task_alive = account_id in self._tasks and not self._tasks[account_id].done()
+        is_ready = account_id in self._ready and self._ready[account_id].is_set()
+
+        if task_alive and is_ready:
             return True
 
         # Client exists but not ready yet - wait a bit
-        if account_id in self._tasks and not self._tasks[account_id].done():
+        if task_alive and not is_ready:
             try:
                 if account_id in self._ready:
                     await asyncio.wait_for(self._ready[account_id].wait(), timeout=15.0)
@@ -110,16 +118,16 @@ class MaxClientManager:
             except asyncio.TimeoutError:
                 return False
 
-        # No client running - auto-start with cached session
+        # Task dead or no client — reconnect
         print(f"[MaxClient] Auto-starting client for account {account_id}", flush=True)
         result = await self.start_auth(account_id, phone)
         return result.get('status') == 'success'
 
     async def check_connected(self, account_id: int) -> bool:
-        """Check if client is connected"""
-        if account_id in self._ready:
-            return self._ready[account_id].is_set()
-        return False
+        """Check if client is actually connected (task alive + ready)"""
+        task_alive = account_id in self._tasks and not self._tasks[account_id].done()
+        is_ready = account_id in self._ready and self._ready[account_id].is_set()
+        return task_alive and is_ready
 
     async def get_dialogs(self, account_id: int, include_private: bool = False) -> list[dict]:
         """Get group chats from Max account.
