@@ -93,6 +93,42 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 {chats_data}
 """
 
+SHEETS_EXPORT_PROMPT = """Ты помощник, который раскладывает готовый аналитический отчет по колонкам таблицы.
+
+Тебе предоставлен ГОТОВЫЙ отчет по ЖК «{complex_name}» за {date_str}.
+Это уже финальный текст — твоя задача НЕ пересказывать и НЕ сокращать его, а аккуратно разложить по нужным колонкам.
+
+ПРАВИЛО №1 — НИКАКОЙ ПОТЕРИ ИНФОРМАЦИИ:
+Весь текст отчета должен попасть в таблицу без исключений. Каждый факт, каждое событие, каждое имя, каждая деталь — всё должно оказаться в одной из колонок. Не выбрасывай ничего.
+
+ПРАВИЛО №2 — ОДНА СТРОКА НА ОДИН ЧАТ:
+Создай отдельную строку для каждого чата, упомянутого в отчете.
+
+Для каждого чата заполни поля:
+1. "chat" — название чата точно как в отчете (ЗАГЛАВНЫМИ буквами)
+2. "alarming_topics" — все тревожные темы, острые проблемы, конфликты, негатив из этого чата. Копируй формулировки из отчета дословно, не сжимай. Если тревог нет — пустая строка.
+3. "additional_info" — все конкретные детали: имена, даты, цитаты, места, планы действий, упомянутые организации. Всё что относится к деталям событий. Если нет — пустая строка.
+4. "risks_reaction" — все упомянутые риски: офлайн-акции, жалобы в органы, обращения в СМИ, провокации, угрозы, а также рекомендуемые или подразумеваемые действия УК/застройщика. Если рисков нет — пустая строка.
+5. "background_topics" — все фоновые и бытовые темы без острого негатива: обсуждение ремонта, провайдеров, парковок, бытовых вопросов. Если нет — пустая строка.
+
+ПРАВИЛО №3 — ТИШИНА:
+Если в отчете по чату написано что сообщений не было (тишина, нет активности, нет сообщений) — заполни "background_topics" текстом "За этот день нет сообщений", остальные поля оставь пустыми.
+
+Верни ТОЛЬКО JSON-массив, без дополнительного текста:
+[
+  {{
+    "chat": "НАЗВАНИЕ ЧАТА",
+    "alarming_topics": "...",
+    "additional_info": "...",
+    "risks_reaction": "...",
+    "background_topics": "..."
+  }}
+]
+
+ОТЧЕТ:
+{summary_text}
+"""
+
 DEFAULT_NEGATIVISTS_RULES = """Ты — аналитик-разведчик, специализирующийся на выявлении потенциальных негативщиков и провокаторов в чатах жилых комплексов.
 
 ТВОЯ ЗАДАЧА:
@@ -405,6 +441,50 @@ class ChatSummarizer:
             return await self._call_api(prompt)
         except Exception as e:
             return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
+
+    async def extract_for_sheets(
+            self,
+            complex_name: str,
+            summary_text: str,
+            date_str: str,
+    ) -> list[dict]:
+        """
+        Parse a free-form complex summary into structured rows for Google Sheets.
+        Returns a list of row dicts: {chat, alarming_topics, additional_info, risks_reaction, background_topics}
+        """
+        prompt = SHEETS_EXPORT_PROMPT.format(
+            complex_name=complex_name,
+            date_str=date_str,
+            summary_text=summary_text,
+        )
+        try:
+            response = await self._call_api(prompt)
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            response = response.strip()
+            rows = json.loads(response)
+            if not isinstance(rows, list):
+                rows = [rows]
+            # Guarantee: rows with all content fields empty get the "no messages" label
+            content_fields = ('alarming_topics', 'additional_info', 'risks_reaction', 'background_topics')
+            for row in rows:
+                if not any(row.get(f, '').strip() for f in content_fields):
+                    row['background_topics'] = 'За этот день нет сообщений'
+            return rows
+        except Exception as e:
+            # Fallback: put the whole summary in alarming_topics
+            return [{
+                "chat": complex_name,
+                "alarming_topics": summary_text,
+                "additional_info": "",
+                "risks_reaction": "",
+                "background_topics": "",
+            }]
 
     async def analyze_negativists(
             self,

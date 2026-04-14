@@ -56,7 +56,33 @@ class MaxClientManager:
         """Convert pymax message into app message format."""
         text = getattr(msg, 'text', None)
         if not text:
-            return None
+            attach_texts = []
+            for attach in getattr(msg, 'attaches', []) or []:
+                attach_type = str(getattr(attach, 'type', '')).upper()
+                if attach_type == 'CONTROL':
+                    event = getattr(attach, 'event', None)
+                    attach_texts.append(f"[Системное событие: {event or 'control'}]")
+                elif attach_type == 'PHOTO':
+                    attach_texts.append("[Фото]")
+                elif attach_type == 'VIDEO':
+                    attach_texts.append("[Видео]")
+                elif attach_type == 'FILE':
+                    attach_texts.append("[Файл]")
+                elif attach_type == 'STICKER':
+                    attach_texts.append("[Стикер]")
+                elif attach_type == 'AUDIO':
+                    attach_texts.append("[Голосовое сообщение]")
+                elif attach_type == 'CONTACT':
+                    attach_texts.append("[Контакт]")
+
+            if attach_texts:
+                text = " ".join(attach_texts)
+            else:
+                msg_type = str(getattr(msg, 'type', '') or '').upper()
+                if msg_type in {'SYSTEM', 'SERVICE'}:
+                    text = f"[{msg_type}]"
+                else:
+                    return None
 
         msg_date = self._extract_message_datetime(msg)
 
@@ -89,6 +115,32 @@ class MaxClientManager:
             return f"Личный диалог {dialog_id}"
         return f"Диалог {dialog_id}"
 
+    async def _fetch_history_with_retry(
+            self,
+            account_id: int,
+            chat_id: int,
+            from_time: Optional[int] = None,
+            backward: int = 200,
+    ):
+        """Fetch Max history page and raise on failure instead of masking it as empty data."""
+        client = self._clients.get(account_id)
+        if not client:
+            raise RuntimeError(f"No Max client for account {account_id}")
+
+        try:
+            return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=backward)
+        except Exception as e:
+            if e.__class__.__name__ == "SocketNotConnectedError":
+                print(f"[MaxClient] Socket dropped for account {account_id}, reconnecting and retrying", flush=True)
+                self._mark_disconnected(account_id)
+                if not await self._ensure_runtime_connection(account_id, force_restart=True):
+                    raise RuntimeError(f"Max account {account_id} is disconnected")
+                client = self._clients.get(account_id)
+                if not client:
+                    raise RuntimeError(f"No Max client for account {account_id} after reconnect")
+                return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=backward)
+            raise
+
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
@@ -111,6 +163,7 @@ class MaxClientManager:
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,
+                    send_fake_telemetry=False,
                     reconnect=False,
                 )
 
@@ -211,20 +264,23 @@ class MaxClientManager:
             print(f"[MaxClient] No client for account {account_id}", flush=True)
             return []
 
-        # Wait for client to be ready if it's still connecting
-        if account_id in self._ready and not self._ready[account_id].is_set():
-            print(f"[MaxClient] Waiting for client {account_id} to connect...", flush=True)
-            try:
-                await asyncio.wait_for(self._ready[account_id].wait(), timeout=20.0)
-            except asyncio.TimeoutError:
-                print(f"[MaxClient] Timeout waiting for client {account_id}", flush=True)
-                return []
+        if not await self._ensure_runtime_connection(account_id):
+            print(f"[MaxClient] Client {account_id} is not connected", flush=True)
+            return []
+
+        client = self._clients.get(account_id)
+        if not client:
+            return []
 
         result = []
         seen_ids = set()
         try:
             is_connected = self._is_socket_connected(account_id)
             print(f"[MaxClient] Client connected: {is_connected}", flush=True)
+
+            # Force refresh from Max API so newly joined chats appear in sync.
+            fetched_chats = await client.fetch_chats()
+            print(f"[MaxClient] Refreshed {len(fetched_chats)} chats from Max API", flush=True)
 
             # Group chats - have .id and .title (deduplicate by id)
             chats = getattr(client, 'chats', []) or []
@@ -281,16 +337,14 @@ class MaxClientManager:
         """Get messages from a Max chat within a date range"""
         client = self._clients.get(account_id)
         if not client:
-            print(f"[MaxClient] No client for account {account_id}", flush=True)
-            return []
+            raise RuntimeError(f"No Max client for account {account_id}")
 
         if not await self._ensure_runtime_connection(account_id):
-            print(f"[MaxClient] Client {account_id} not connected", flush=True)
-            return []
+            raise RuntimeError(f"Max client {account_id} is not connected")
 
         client = self._clients.get(account_id)
         if not client:
-            return []
+            raise RuntimeError(f"No Max client for account {account_id}")
 
         start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
         end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
@@ -298,42 +352,67 @@ class MaxClientManager:
         print(f"[MaxClient] Fetching messages chat={chat_id}, period={start_naive} - {end_naive}", flush=True)
 
         messages = []
-        try:
-            history = await client.fetch_history(chat_id=chat_id)
-        except Exception as e:
-            if e.__class__.__name__ == "SocketNotConnectedError":
-                print(f"[MaxClient] Socket dropped for account {account_id}, reconnecting and retrying", flush=True)
-                self._mark_disconnected(account_id)
-                if not await self._ensure_runtime_connection(account_id, force_restart=True):
-                    return []
-                client = self._clients.get(account_id)
-                if not client:
-                    return []
-                try:
-                    history = await client.fetch_history(chat_id=chat_id)
-                except Exception as retry_error:
-                    print(f"[MaxClient] Retry failed fetching messages: {retry_error}", flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return []
-            else:
-                print(f"[MaxClient] Error fetching messages: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                return []
+        seen_message_ids = set()
+        page_size = min(max(limit, 200), 1000)
+        from_time = int(end_naive.timestamp() * 1000)
+        pages = 0
 
         try:
-            for msg in history:
-                normalized = self._normalize_message(msg)
-                if not normalized:
-                    continue
+            while len(messages) < limit and pages < 50:
+                pages += 1
+                history = await self._fetch_history_with_retry(
+                    account_id=account_id,
+                    chat_id=chat_id,
+                    from_time=from_time,
+                    backward=page_size,
+                )
+                if not history:
+                    break
 
-                msg_date = self._extract_message_datetime(msg)
-                if msg_date and (msg_date < start_naive or msg_date > end_naive):
-                    continue
+                oldest_seen_ms = None
+                added_this_page = 0
 
-                normalized.pop('_sort_ts', None)
-                messages.append(normalized)
+                for msg in history:
+                    msg_id = getattr(msg, 'id', 0)
+                    if msg_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(msg_id)
+
+                    msg_date = self._extract_message_datetime(msg)
+                    if msg_date:
+                        msg_ts_ms = int(msg_date.timestamp() * 1000)
+                        if oldest_seen_ms is None or msg_ts_ms < oldest_seen_ms:
+                            oldest_seen_ms = msg_ts_ms
+                        if msg_date < start_naive:
+                            continue
+                        if msg_date > end_naive:
+                            continue
+
+                    normalized = self._normalize_message(msg)
+                    if not normalized:
+                        continue
+
+                    normalized.pop('_sort_ts', None)
+                    messages.append(normalized)
+                    added_this_page += 1
+
+                    if len(messages) >= limit:
+                        break
+
+                if oldest_seen_ms is None:
+                    break
+
+                oldest_seen_date = datetime.fromtimestamp(oldest_seen_ms / 1000)
+                if oldest_seen_date <= start_naive:
+                    break
+
+                if added_this_page == 0 and len(history) < page_size:
+                    break
+
+                next_from_time = oldest_seen_ms - 1
+                if next_from_time >= from_time:
+                    break
+                from_time = next_from_time
 
             print(f"[MaxClient] Found {len(messages)} messages", flush=True)
 
@@ -341,10 +420,10 @@ class MaxClientManager:
             print(f"[MaxClient] Error fetching messages: {e}", flush=True)
             import traceback
             traceback.print_exc()
-            return []
+            raise RuntimeError(f"Failed to fetch Max messages for chat {chat_id}: {e}") from e
 
-        # Return in chronological order
-        return list(reversed(messages))
+        messages.sort(key=lambda item: item['date'])
+        return messages[:limit]
 
     async def get_service_messages(self, account_id: int, limit: int = 20) -> list[dict]:
         """Get recent messages from Max private dialogs for code lookup."""

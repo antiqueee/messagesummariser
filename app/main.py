@@ -344,6 +344,125 @@ async def delete_complex(complex_id: int):
     return {"message": "Complex deleted"}
 
 
+@app.put("/api/complexes/{complex_id}/sheet")
+async def set_complex_sheet(complex_id: int, request: Request):
+    """Save or clear the Google Sheet URL/ID linked to a complex"""
+    from .sheets_client import extract_sheet_id
+    data = await request.json()
+    raw = (data.get("google_sheet_url") or "").strip()
+    sheet_id = extract_sheet_id(raw) if raw else None
+    await db.set_complex_sheet(complex_id, sheet_id)
+    return {"message": "Google Sheet сохранена", "sheet_id": sheet_id}
+
+
+@app.get("/api/sheets/status")
+async def sheets_status():
+    """Return Google Sheets configuration status"""
+    from .sheets_client import is_configured, get_service_account_email
+    configured = is_configured()
+    email = get_service_account_email() if configured else None
+    return {"configured": configured, "service_account_email": email}
+
+
+@app.post("/api/reports/export-to-sheets")
+async def export_report_to_sheets(request: Request):
+    """
+    Export generated report summaries to Google Sheets.
+
+    Uses AI to parse the free-form summary into structured rows matching the
+    sheet column layout:
+      A: Дата | B: No | C: Тревожные темы | D: Чат, где обсуждают |
+      E: Доп. информация | F: Риски/реакция | G: Основные (фоновые) темы
+
+    Body: {
+      "date_str": "14.04.2026",
+      "complexes": [
+        {"complex_id": 1, "complex_name": "ЖК Солнечный", "summary": "..."}
+      ]
+    }
+    """
+    from .sheets_client import is_configured, export_to_sheet
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Google Sheets не настроен. Добавьте GOOGLE_SHEETS_CREDENTIALS_FILE в .env файл."
+        )
+
+    try:
+        summarizer = get_summarizer()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=400,
+            detail="AI-суммаризатор не настроен. Добавьте OPENROUTER_API_KEY в .env файл."
+        )
+
+    data = await request.json()
+    date_str = data.get("date_str", "").strip()
+    complexes_payload = data.get("complexes", [])
+
+    if not date_str:
+        raise HTTPException(status_code=400, detail="date_str не указан")
+    if not complexes_payload:
+        raise HTTPException(status_code=400, detail="complexes пустой")
+
+    results = []
+    for item in complexes_payload:
+        complex_id = item.get("complex_id")
+        summary = item.get("summary", "").strip()
+        complex_name = item.get("complex_name", str(complex_id))
+
+        complex_row = await db.get_complex(complex_id)
+        if not complex_row:
+            results.append({
+                "complex_id": complex_id,
+                "complex_name": complex_name,
+                "success": False,
+                "message": "ЖК не найден в базе",
+            })
+            continue
+
+        sheet_id = complex_row.get("google_sheet_id")
+        complex_name = complex_row.get("name", complex_name)
+
+        if not sheet_id:
+            results.append({
+                "complex_id": complex_id,
+                "complex_name": complex_name,
+                "success": False,
+                "message": "Google Таблица не привязана к этому ЖК. Добавьте ссылку на таблицу в настройках ЖК.",
+            })
+            continue
+
+        if not summary:
+            results.append({
+                "complex_id": complex_id,
+                "complex_name": complex_name,
+                "success": False,
+                "message": "Сводка пустая — нечего экспортировать",
+            })
+            continue
+
+        # Ask AI to parse the free-form summary into structured rows
+        print(f"[Sheets] Structuring summary for {complex_name}...", flush=True)
+        structured_rows = await summarizer.extract_for_sheets(
+            complex_name=complex_name,
+            summary_text=summary,
+            date_str=date_str,
+        )
+
+        # Write rows to the Google Sheet
+        print(f"[Sheets] Writing {len(structured_rows)} rows to sheet for {complex_name}...", flush=True)
+        result = await export_to_sheet(sheet_id, date_str, structured_rows)
+        results.append({
+            "complex_id": complex_id,
+            "complex_name": complex_name,
+            **result,
+        })
+
+    return {"results": results}
+
+
 # ============== Chat Endpoints ==============
 
 @app.get("/api/chats")

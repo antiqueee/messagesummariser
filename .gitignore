@@ -34,3 +34,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Google Service Account credentials (never commit!)
+*.json
+
+# Old venv backups
+venv_old/

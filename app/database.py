@@ -28,6 +28,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 sort_order INTEGER DEFAULT 999,
+                google_sheet_id TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -35,6 +36,12 @@ async def init_db():
         # Add sort_order column if it doesn't exist (for existing DBs)
         try:
             await db.execute("ALTER TABLE complexes ADD COLUMN sort_order INTEGER DEFAULT 999")
+        except:
+            pass  # Column already exists
+
+        # Add google_sheet_id column if it doesn't exist (for existing DBs)
+        try:
+            await db.execute("ALTER TABLE complexes ADD COLUMN google_sheet_id TEXT")
         except:
             pass  # Column already exists
 
@@ -221,6 +228,16 @@ async def update_complex(complex_id: int, name: str, sort_order: int = None):
             await db.execute("UPDATE complexes SET name = ?, sort_order = ? WHERE id = ?", (name, sort_order, complex_id))
         else:
             await db.execute("UPDATE complexes SET name = ? WHERE id = ?", (name, complex_id))
+        await db.commit()
+
+
+async def set_complex_sheet(complex_id: int, google_sheet_id: Optional[str]):
+    """Save or clear the Google Sheet ID linked to a complex"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE complexes SET google_sheet_id = ? WHERE id = ?",
+            (google_sheet_id or None, complex_id)
+        )
         await db.commit()
 
 

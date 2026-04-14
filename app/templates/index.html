@@ -438,6 +438,44 @@
             background: #f57c00;
         }
 
+        .sheets-btn {
+            background: #1a7340;
+            color: white;
+        }
+
+        .sheets-btn:hover {
+            background: #145a32;
+        }
+
+        .sheets-btn:disabled {
+            background: #888;
+            cursor: not-allowed;
+        }
+
+        .sheets-result {
+            margin-top: 12px;
+            font-size: 13px;
+        }
+
+        .sheets-result-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 5px;
+            margin-bottom: 5px;
+        }
+
+        .sheets-result-item.ok {
+            background: #e8f5e9;
+            color: #1b5e20;
+        }
+
+        .sheets-result-item.err {
+            background: #ffebee;
+            color: #b71c1c;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
@@ -1294,6 +1332,13 @@
                             <div class="card-title">${c.name}</div>
                             <button class="btn btn-danger btn-small" onclick="deleteComplex(${c.id})">Удалить</button>
                         </div>
+                        <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <input type="text" id="sheet-url-${c.id}"
+                                placeholder="Ссылка на Google Таблицу..."
+                                value="${c.google_sheet_id ? 'https://docs.google.com/spreadsheets/d/' + c.google_sheet_id : ''}"
+                                style="flex: 1; min-width: 200px; padding: 6px 10px; border: 1px solid #d4a0ab; border-radius: 6px; font-size: 13px;">
+                            <button class="btn btn-secondary btn-small" onclick="saveComplexSheet(${c.id})">Сохранить таблицу</button>
+                        </div>
                     </div>
                 `).join('');
             } catch (e) {
@@ -1323,6 +1368,19 @@
                 loadComplexes();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function saveComplexSheet(id) {
+            const input = document.getElementById(`sheet-url-${id}`);
+            if (!input) return;
+            const url = input.value.trim();
+            try {
+                await api(`/api/complexes/${id}/sheet`, 'PUT', { google_sheet_url: url });
+                input.style.borderColor = '#4caf50';
+                setTimeout(() => { input.style.borderColor = ''; }, 1500);
+            } catch (e) {
+                alert('Ошибка сохранения таблицы: ' + e.message);
             }
         }
 
@@ -1645,8 +1703,12 @@
                             ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
                         </span>
                     </div>
-                    <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
+                        ${isAI ? `<button class="btn btn-small sheets-btn" id="sheets-export-btn" onclick="exportToSheets('${startDate.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'})}')">Выгрузить в Google Таблицы</button>` : ''}
+                    </div>
                 </div>
+                <div id="sheets-export-result"></div>
             `;
 
             for (const complex of report.complexes) {
@@ -1737,6 +1799,60 @@
                 document.body.removeChild(textarea);
                 alert('Сводка скопирована!');
             });
+        }
+
+        async function exportToSheets(dateStr) {
+            if (!lastReport) return;
+            if (lastReport.mode !== 'ai') {
+                alert('Экспорт доступен только для AI-сводок');
+                return;
+            }
+
+            const btn = document.getElementById('sheets-export-btn');
+            const resultEl = document.getElementById('sheets-export-result');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Выгружаю...';
+            }
+            resultEl.innerHTML = '<div style="color: #666; font-size: 13px; padding: 8px 0;">AI структурирует сводки и записывает в таблицы...</div>';
+
+            // Build payload: only AI complexes with a summary
+            const complexes = lastReport.complexes
+                .filter(c => c.summary)
+                .map(c => ({
+                    complex_id: c.complex_id,
+                    complex_name: c.complex_name,
+                    summary: c.summary,
+                }));
+
+            if (complexes.length === 0) {
+                resultEl.innerHTML = '<div class="alert alert-error" style="font-size:13px;">Нет сводок для экспорта</div>';
+                if (btn) { btn.disabled = false; btn.textContent = 'Выгрузить в Google Таблицы'; }
+                return;
+            }
+
+            try {
+                const data = await api('/api/reports/export-to-sheets', 'POST', {
+                    date_str: dateStr,
+                    complexes,
+                });
+
+                let html = '<div class="sheets-result">';
+                for (const r of data.results) {
+                    const cls = r.success ? 'ok' : 'err';
+                    const icon = r.success ? '✓' : '✗';
+                    html += `<div class="sheets-result-item ${cls}">
+                        <strong>${icon} ${escapeHtml(r.complex_name)}:</strong>
+                        <span>${escapeHtml(r.message)}</span>
+                    </div>`;
+                }
+                html += '</div>';
+                resultEl.innerHTML = html;
+            } catch (e) {
+                resultEl.innerHTML = `<div class="alert alert-error" style="font-size:13px;">Ошибка экспорта: ${escapeHtml(e.message)}</div>`;
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Выгрузить в Google Таблицы'; }
+            }
         }
 
         // Rules editing

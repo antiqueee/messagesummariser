@@ -11,3 +11,5 @@ httpx>=0.25.0
 aiogram>=3.4.0
 python-socks[asyncio]>=2.0.0
 maxapi-python>=1.2.5
+gspread>=6.0.0
+google-auth>=2.0.0
