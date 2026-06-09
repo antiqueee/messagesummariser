@@ -85,6 +85,33 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS vk_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                vk_user_id INTEGER,
+                access_token TEXT,
+                refresh_token TEXT,
+                token_expires_at TEXT,
+                is_authorized INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # Generic source accounts table for future provider-agnostic integrations
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS source_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                login TEXT,
+                name TEXT NOT NULL,
+                external_account_id TEXT,
+                auth_data TEXT,
+                is_authorized INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         # Add source column to chats (telegram or max)
         try:
             await db.execute("ALTER TABLE chats ADD COLUMN source TEXT DEFAULT 'telegram'")
@@ -96,6 +123,32 @@ async def init_db():
             await db.execute("ALTER TABLE chats ADD COLUMN max_account_id INTEGER")
         except:
             pass
+
+        # Future-proof chat references for multiple providers
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN source_account_id INTEGER")
+        except:
+            pass
+        try:
+            await db.execute("ALTER TABLE chats ADD COLUMN source_chat_id TEXT")
+        except:
+            pass
+
+        # Backfill provider-agnostic references for existing Telegram/Max rows
+        await db.execute("UPDATE chats SET source = 'telegram' WHERE source IS NULL")
+        await db.execute("""
+            UPDATE chats
+            SET source_account_id = CASE
+                WHEN source = 'max' THEN max_account_id
+                ELSE account_id
+            END
+            WHERE source_account_id IS NULL
+        """)
+        await db.execute("""
+            UPDATE chats
+            SET source_chat_id = CAST(telegram_id AS TEXT)
+            WHERE source_chat_id IS NULL
+        """)
 
         # Settings table (for storing editable reglament etc)
         await db.execute("""
@@ -195,6 +248,77 @@ async def delete_max_account(account_id: int):
         await db.commit()
 
 
+async def create_vk_account(name: str) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO vk_accounts (name, is_authorized, created_at) VALUES (?, 0, ?)",
+            (name, datetime.now().isoformat())
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_vk_accounts() -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM vk_accounts ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_vk_account(account_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM vk_accounts WHERE id = ?", (account_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_vk_account_tokens(
+    account_id: int,
+    *,
+    vk_user_id: Optional[int],
+    access_token: str,
+    refresh_token: Optional[str] = None,
+    token_expires_at: Optional[str] = None,
+    is_authorized: bool = True,
+):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE vk_accounts
+            SET vk_user_id = ?,
+                access_token = ?,
+                refresh_token = ?,
+                token_expires_at = ?,
+                is_authorized = ?
+            WHERE id = ?
+            """,
+            (
+                vk_user_id,
+                access_token,
+                refresh_token,
+                token_expires_at,
+                1 if is_authorized else 0,
+                account_id,
+            )
+        )
+        await db.commit()
+
+
+async def update_vk_account_name(account_id: int, name: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("UPDATE vk_accounts SET name = ? WHERE id = ?", (name, account_id))
+        await db.commit()
+
+
+async def delete_vk_account(account_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM chats WHERE source = 'vk' AND source_account_id = ?", (account_id,))
+        await db.execute("DELETE FROM vk_accounts WHERE id = ?", (account_id,))
+        await db.commit()
+
+
 # Complex operations
 async def create_complex(name: str) -> int:
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -261,38 +385,69 @@ async def upsert_chat(telegram_id: int, account_id: int, original_title: str) ->
         if existing:
             # Update title if changed
             await db.execute(
-                "UPDATE chats SET original_title = ? WHERE id = ?",
-                (original_title, existing[0])
+                """
+                UPDATE chats
+                SET original_title = ?,
+                    source = COALESCE(source, 'telegram'),
+                    source_account_id = COALESCE(source_account_id, ?),
+                    source_chat_id = COALESCE(source_chat_id, CAST(? AS TEXT))
+                WHERE id = ?
+                """,
+                (original_title, account_id, telegram_id, existing[0])
             )
             await db.commit()
             return existing[0]
         else:
             cursor = await db.execute(
-                """INSERT INTO chats (telegram_id, account_id, original_title, created_at)
-                   VALUES (?, ?, ?, ?)""",
-                (telegram_id, account_id, original_title, datetime.now().isoformat())
+                """
+                INSERT INTO chats (
+                    telegram_id, account_id, original_title, source,
+                    source_account_id, source_chat_id, created_at
+                )
+                VALUES (?, ?, ?, 'telegram', ?, CAST(? AS TEXT), ?)
+                """,
+                (telegram_id, account_id, original_title, account_id, telegram_id, datetime.now().isoformat())
             )
             await db.commit()
             return cursor.lastrowid
 
 
 async def get_chats(account_id: Optional[int] = None, complex_id: Optional[int] = None,
+                    account_key: Optional[str] = None,
                     monitored_only: bool = False) -> list[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         query = """
             SELECT c.*, cx.name as complex_name,
-                   COALESCE(a.name, ma.name) as account_name
+                   COALESCE(a.name, ma.name, va.name) as account_name
             FROM chats c
             LEFT JOIN complexes cx ON c.complex_id = cx.id
             LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
             LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
+            LEFT JOIN vk_accounts va ON c.source = 'vk' AND c.source_account_id = va.id
             WHERE 1=1
         """
         params = []
 
-        if account_id is not None:
+        if account_key:
+            try:
+                source, raw_id = account_key.split(":", 1)
+                source_account_id = int(raw_id)
+            except Exception:
+                source = None
+                source_account_id = None
+
+            if source == "telegram" and source_account_id is not None:
+                query += " AND (c.source IS NULL OR c.source = 'telegram') AND c.account_id = ?"
+                params.append(source_account_id)
+            elif source == "max" and source_account_id is not None:
+                query += " AND c.source = 'max' AND c.max_account_id = ?"
+                params.append(source_account_id)
+            elif source == "vk" and source_account_id is not None:
+                query += " AND c.source = 'vk' AND c.source_account_id = ?"
+                params.append(source_account_id)
+        elif account_id is not None:
             query += " AND c.account_id = ?"
             params.append(account_id)
 
@@ -315,11 +470,12 @@ async def get_chat(chat_id: int) -> Optional[dict]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT c.*, cx.name as complex_name,
-                   COALESCE(a.name, ma.name) as account_name
+                   COALESCE(a.name, ma.name, va.name) as account_name
             FROM chats c
             LEFT JOIN complexes cx ON c.complex_id = cx.id
             LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
             LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
+            LEFT JOIN vk_accounts va ON c.source = 'vk' AND c.source_account_id = va.id
             WHERE c.id = ?
         """, (chat_id,))
         row = await cursor.fetchone()
@@ -366,12 +522,13 @@ async def get_monitored_chats_by_complex() -> dict[int, list[dict]]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT c.*, cx.name as complex_name, cx.sort_order as complex_sort_order,
-                   COALESCE(a.name, ma.name) as account_name,
-                   COALESCE(a.phone, ma.phone) as account_phone
+                   COALESCE(a.name, ma.name, va.name) as account_name,
+                   COALESCE(a.phone, ma.phone, CAST(va.vk_user_id AS TEXT)) as account_phone
             FROM chats c
             JOIN complexes cx ON c.complex_id = cx.id
             LEFT JOIN accounts a ON c.account_id = a.id AND (c.source IS NULL OR c.source = 'telegram')
             LEFT JOIN max_accounts ma ON c.max_account_id = ma.id AND c.source = 'max'
+            LEFT JOIN vk_accounts va ON c.source = 'vk' AND c.source_account_id = va.id
             WHERE c.is_monitored = 1 AND c.complex_id IS NOT NULL
             ORDER BY cx.sort_order, cx.name, c.original_title
         """)
@@ -399,19 +556,82 @@ async def upsert_max_chat(max_chat_id: int, max_account_id: int, original_title:
 
         if existing:
             await db.execute(
-                "UPDATE chats SET original_title = ? WHERE id = ?",
-                (original_title, existing[0])
+                """
+                UPDATE chats
+                SET original_title = ?,
+                    source = 'max',
+                    source_account_id = COALESCE(source_account_id, ?),
+                    source_chat_id = COALESCE(source_chat_id, CAST(? AS TEXT))
+                WHERE id = ?
+                """,
+                (original_title, max_account_id, max_chat_id, existing[0])
             )
             await db.commit()
             return existing[0]
         else:
             cursor = await db.execute(
-                """INSERT INTO chats (telegram_id, account_id, max_account_id, original_title, source, created_at)
-                   VALUES (?, 0, ?, ?, 'max', ?)""",
-                (max_chat_id, max_account_id, original_title, datetime.now().isoformat())
+                """
+                INSERT INTO chats (
+                    telegram_id, account_id, max_account_id, original_title, source,
+                    source_account_id, source_chat_id, created_at
+                )
+                VALUES (?, 0, ?, ?, 'max', ?, CAST(? AS TEXT), ?)
+                """,
+                (
+                    max_chat_id,
+                    max_account_id,
+                    original_title,
+                    max_account_id,
+                    max_chat_id,
+                    datetime.now().isoformat()
+                )
             )
             await db.commit()
             return cursor.lastrowid
+
+
+async def upsert_vk_chat(vk_chat_id: int, vk_account_id: int, original_title: str) -> int:
+    """Create or update a chat from VK messenger."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id FROM chats WHERE source = 'vk' AND source_account_id = ? AND source_chat_id = CAST(? AS TEXT)",
+            (vk_account_id, vk_chat_id)
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            await db.execute(
+                """
+                UPDATE chats
+                SET original_title = ?,
+                    source = 'vk',
+                    source_account_id = ?,
+                    source_chat_id = CAST(? AS TEXT)
+                WHERE id = ?
+                """,
+                (original_title, vk_account_id, vk_chat_id, existing[0])
+            )
+            await db.commit()
+            return existing[0]
+
+        cursor = await db.execute(
+            """
+            INSERT INTO chats (
+                telegram_id, account_id, original_title, source,
+                source_account_id, source_chat_id, created_at
+            )
+            VALUES (?, 0, ?, 'vk', ?, CAST(? AS TEXT), ?)
+            """,
+            (
+                vk_chat_id,
+                original_title,
+                vk_account_id,
+                vk_chat_id,
+                datetime.now().isoformat(),
+            )
+        )
+        await db.commit()
+        return cursor.lastrowid
 
 
 # Settings operations

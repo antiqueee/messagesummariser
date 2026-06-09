@@ -174,3 +174,11 @@ class MaxAccountCreateRequest(BaseModel):
 class MaxChatAddRequest(BaseModel):
     max_chat_id: int
     title: str
+
+
+class VkAccountCreateRequest(BaseModel):
+    name: str
+
+
+class VkTokenUpdateRequest(BaseModel):
+    access_token: str

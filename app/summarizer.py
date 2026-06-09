@@ -49,12 +49,31 @@ DEFAULT_REPORT_RULES = """Ты — аналитик-разведчик, спец
 Пишем: «Чат остается стабильным, в основном обсуждают мелкие бытовые вопросы, никакой агрессии нет».
 Важно: НЕ расписываем подробно бытовые детали. Это «бытовой шум».
 
-6. ОБЩИЕ ПРАВИЛА ОФОРМЛЕНИЯ
+6. ГРАДАЦИЯ ДЕТАЛИЗАЦИИ ПО ВАЖНОСТИ ТЕМЫ
+Не все темы заслуживают одинакового объёма. Строго соблюдай:
+
+ОДНО ПРЕДЛОЖЕНИЕ, без деталей — темы, не связанные с девелоперской деятельностью, строительством, УК или жизнью в доме:
+- Объявления о потере/находке животных, вещей
+- Поздравления, праздники, дни рождения жильцов
+- Реклама личных услуг жильцов, объявления купли-продажи
+- Личные договорённости между жильцами (отдам, куплю, меняю)
+- Любые разговоры, не касающиеся дома, стройки, УК
+Пример: «В чате несколько объявлений бытового характера — потеря кошки, продажа велосипеда — ничего значимого».
+
+ПОЛНАЯ ДЕТАЛИЗАЦИЯ, ничего не упускать — всё что касается:
+- Строительства, отделки, качества работ, сроков
+- Приёмки квартир, выдачи ключей, актов, эскроу
+- УК: уборка, лифты, охрана, квитанции, тарифы, обслуживание
+- Любых претензий к застройщику или УК
+- Офлайн-рисков и организованных действий жильцов
+- Коммуникаций с госорганами, СМИ, юристами, депутатами
+
+7. ОБЩИЕ ПРАВИЛА ОФОРМЛЕНИЯ
 - Один чат — один абзац. Текст плотный и содержательный.
 - Никаких сокращений и опущений. Если обсуждается важный риск — он расписывается во всех подробностях.
 - Использование контекста: если дольщики ссылаются на другие ЖК, это тоже стоит упомянуть как причину их страхов.
 
-7. СТРУКТУРА ОТЧЕТА
+8. СТРУКТУРА ОТЧЕТА
 Название чата пишется ЗАГЛАВНЫМИ БУКВАМИ (без звездочек и markdown-разметки), далее ставится длинное тире и идет основной текст отчета (один человеческий абзац).
 Если информации по чату очень много (особенно по офлайн-рискам), абзац может быть объемным, но он НИКОГДА не должен дробиться на списки.
 ВАЖНО: Не используй звездочки (*), markdown-разметку или любое другое форматирование. Только чистый текст.
@@ -86,6 +105,8 @@ BATCH_SUMMARIZATION_PROMPT = """{rules}
 Формат: для каждого чата — название ЗАГЛАВНЫМИ БУКВАМИ (без звездочек и markdown), длинное тире, затем связный человеческий абзац.
 
 ВАЖНО: Выводи отчеты по чатам СТРОГО В ТОМ ЖЕ ПОРЯДКЕ, в котором они перечислены ниже. Сначала идут корпуса по номерам (1, 2, 3...), в конце — общие чаты. НЕ меняй этот порядок!
+ВАЖНО: У КАЖДОГО ЧАТА ЕСТЬ ТОЧНОЕ ИМЯ В ПОЛЕ EXACT_TITLE. В ИТОГОВОМ ОТЧЕТЕ НАЗВАНИЕ КАЖДОГО ЧАТА НУЖНО ВЫВОДИТЬ ДОСЛОВНО ПО EXACT_TITLE, БЕЗ ПЕРЕИМЕНОВАНИЯ, СОКРАЩЕНИЙ, ОБОБЩЕНИЙ И СЛИЯНИЯ С ДРУГИМИ ЧАТАМИ.
+ВАЖНО: НЕЛЬЗЯ ЗАМЕНЯТЬ ИМЯ ЧАТА НА БОЛЕЕ ОБЩЕЕ ОПИСАНИЕ ВРОДЕ «4-5 ОЧЕРЕДЬ», ЕСЛИ В EXACT_TITLE УКАЗАНО ИНОЕ НАЗВАНИЕ.
 
 ЖК: {complex_name}
 Период: {start_date} - {end_date}
@@ -199,8 +220,9 @@ class ChatSummarizer:
     FALLBACK_MODELS = [
         "google/gemini-2.5-flash-preview-05-20",
         "google/gemini-2.5-flash-preview",
+        "google/gemini-2.5-flash",
         "google/gemini-2.0-flash-001",
-        "google/gemini-2.0-flash-exp:free",
+        "anthropic/claude-3-haiku-20240307",
     ]
 
     def __init__(self, api_key: str, model: str = None):
@@ -295,51 +317,61 @@ class ChatSummarizer:
         json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         print(f"[API] Request size: {len(json_bytes)} bytes, sending...")
 
+        # Try current model + full fallback chain on provider/model errors
+        models_to_try = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
+        last_error = None
+
         async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                self.OPENROUTER_URL,
-                headers=headers,
-                content=json_bytes
-            )
+            for model_attempt in models_to_try:
+                payload["model"] = model_attempt
+                json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+                print(f"[API] Trying model: {model_attempt}", flush=True)
 
-            print(f"[API] Response status: {response.status_code}")
+                response = await client.post(
+                    self.OPENROUTER_URL,
+                    headers=headers,
+                    content=json_bytes
+                )
 
-            try:
-                data = response.json()
-            except:
-                data = {"error": response.text}
+                print(f"[API] Response status: {response.status_code}")
 
-            # If model not found, try fallbacks automatically
-            if response.status_code != 200:
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {"error": response.text}
+
+                if response.status_code == 200:
+                    # Success — update current model if it changed
+                    if model_attempt != self.model:
+                        print(f"[API] Switched to model: {model_attempt}", flush=True)
+                        self.model = model_attempt
+                    print(f"[API] Success, response length: {len(data['choices'][0]['message']['content'])} chars")
+                    return data["choices"][0]["message"]["content"]
+
                 error_msg = data.get("error", {})
                 if isinstance(error_msg, dict):
                     error_msg = error_msg.get("message", str(data))
+                error_str = str(error_msg).lower()
 
-                if "not a valid model" in str(error_msg).lower() or "model not found" in str(error_msg).lower():
-                    print(f"[API] Model {self.model} invalid, trying fallbacks...", flush=True)
-                    self._model_verified = False
-                    await self._find_working_model()
+                # Retry the fallback chain on provider errors or model issues
+                retryable = (
+                    "provider returned error" in error_str
+                    or "not a valid model" in error_str
+                    or "model not found" in error_str
+                    or "no endpoints found" in error_str
+                    or "overloaded" in error_str
+                    or "service unavailable" in error_str
+                    or "rate limit" in error_str
+                    or response.status_code in (429, 502, 503, 504)
+                )
+                print(f"[API] Error with {model_attempt}: {error_msg} (retryable={retryable})", flush=True)
+                last_error = error_msg
 
-                    # Retry with new model
-                    payload["model"] = self.model
-                    json_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-                    response = await client.post(self.OPENROUTER_URL, headers=headers, content=json_bytes)
-                    try:
-                        data = response.json()
-                    except:
-                        data = {"error": response.text}
-
-                    if response.status_code != 200:
-                        error_msg = data.get("error", {})
-                        if isinstance(error_msg, dict):
-                            error_msg = error_msg.get("message", str(data))
-                        raise Exception(f"OpenRouter API error: {error_msg}")
-                else:
-                    print(f"[API] Error: {error_msg}")
+                if not retryable:
+                    # Non-retryable error — fail immediately
                     raise Exception(f"OpenRouter API error: {error_msg}")
 
-            print(f"[API] Success, response length: {len(data['choices'][0]['message']['content'])} chars")
-            return data["choices"][0]["message"]["content"]
+            raise Exception(f"OpenRouter API error (all models failed): {last_error}")
 
     async def summarize_chat(
             self,
@@ -348,7 +380,8 @@ class ChatSummarizer:
             complex_name: str,
             start_date: datetime,
             end_date: datetime,
-            rules: str = None
+            rules: str = None,
+            content_filter: str = ""
     ) -> dict:
         """Generate a summary for a single chat"""
         rules = rules or DEFAULT_REPORT_RULES
@@ -365,7 +398,14 @@ class ChatSummarizer:
         if len(formatted_messages) > max_chars:
             formatted_messages = "...[сообщения сокращены]...\n" + formatted_messages[-max_chars:]
 
-        prompt = SUMMARIZATION_PROMPT.format(
+        filter_note = ""
+        if content_filter:
+            filter_note = (
+                f"\nВАЖНО: Анализируй только контент, связанный с: {content_filter}. "
+                f"Остальные сообщения используй только как фон и не выноси в итоговый абзац.\n"
+            )
+
+        prompt = (SUMMARIZATION_PROMPT.format(
             rules=rules,
             chat_name=chat_name,
             complex_name=complex_name,
@@ -373,7 +413,7 @@ class ChatSummarizer:
             end_date=end_date.strftime('%d.%m.%Y %H:%M'),
             message_count=len(messages),
             messages=formatted_messages
-        )
+        ) + filter_note)
 
         try:
             summary_text = await self._call_api(prompt)
@@ -391,56 +431,33 @@ class ChatSummarizer:
             end_date: datetime,
             rules: str = None
     ) -> str:
-        """Generate a combined summary for all chats in a complex"""
+        """Generate a complex summary by summarizing each chat separately.
+
+        This is more expensive than a single batch prompt, but it guarantees
+        that every monitored chat gets its own output block and cannot be
+        silently merged with another chat by the model.
+        """
         rules = rules or DEFAULT_REPORT_RULES
-
-        # Build combined chats data
-        chats_data_parts = []
-        all_empty = True
-
-        for chat_info in chats_with_messages:
-            chat_name = chat_info['chat_name']
-            messages = chat_info['messages']
-            content_filter = chat_info.get('content_filter', '')
-
-            # Build filter instruction if specified
-            filter_note = ""
-            if content_filter:
-                filter_note = f"\n[ФИЛЬТР: Анализируй только контент, связанный с: {content_filter}. Остальные сообщения игнорируй.]\n"
-
-            if not messages:
-                chats_data_parts.append(
-                    f"--- Чат: {chat_name} ---{filter_note}Сообщений нет.\n"
-                )
-            else:
-                all_empty = False
-                formatted = self._format_messages(messages)
-                chats_data_parts.append(
-                    f"--- Чат: {chat_name} ({len(messages)} сообщений) ---{filter_note}{formatted}\n"
-                )
-
+        all_empty = all(len(chat_info.get('messages') or []) == 0 for chat_info in chats_with_messages)
         if all_empty:
             return f"По ЖК «{complex_name}» за указанный период не было ни одного сообщения во всех чатах, полная тишина."
 
-        chats_data = "\n".join(chats_data_parts)
+        results = []
+        for chat_info in chats_with_messages:
+            chat_name = chat_info.get('report_chat_name') or chat_info['chat_name']
+            messages = chat_info['messages']
+            summary = await self.summarize_chat(
+                messages=messages,
+                chat_name=chat_name,
+                complex_name=complex_name,
+                start_date=start_date,
+                end_date=end_date,
+                rules=rules,
+                content_filter=chat_info.get('content_filter', ''),
+            )
+            results.append(summary.get('summary_text', '').strip())
 
-        # Truncate if too large (Gemini has ~1M tokens context)
-        max_chars = 500000
-        if len(chats_data) > max_chars:
-            chats_data = "...[часть сообщений сокращена]...\n" + chats_data[-max_chars:]
-
-        prompt = BATCH_SUMMARIZATION_PROMPT.format(
-            rules=rules,
-            complex_name=complex_name,
-            start_date=start_date.strftime('%d.%m.%Y %H:%M'),
-            end_date=end_date.strftime('%d.%m.%Y %H:%M'),
-            chats_data=chats_data
-        )
-
-        try:
-            return await self._call_api(prompt)
-        except Exception as e:
-            return f"Ошибка при генерации сводки по ЖК {complex_name}: {str(e)}"
+        return "\n\n".join(part for part in results if part)
 
     async def extract_for_sheets(
             self,

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from dotenv import load_dotenv
 
 from . import database as db
@@ -57,20 +57,50 @@ def format_chat_log_context(chat: dict, start_date: Optional[datetime] = None,
         f"telegram_id={chat.get('telegram_id')!r} ({type(chat.get('telegram_id')).__name__}), "
         f"account_id={chat.get('account_id')!r}, "
         f"max_account_id={chat.get('max_account_id')!r}, "
+        f"source_account_id={chat.get('source_account_id')!r}, "
+        f"source_chat_id={chat.get('source_chat_id')!r}, "
         f"selected_topics_raw={chat.get('selected_topics')!r}, "
         f"topic_ids={topic_ids!r}, "
         f"start_date={start_date!r}, "
         f"end_date={end_date!r}"
     )
+
+
+def extract_vk_access_token(raw_value: str) -> str:
+    """Accept either a raw VK token or the full oauth redirect URL."""
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+
+    match = re.search(r"(?:[#?&]|^)access_token=([^&#\s]+)", value)
+    if match:
+        return match.group(1).strip()
+
+    return value
+
+
+def build_report_chat_name(chat: dict) -> str:
+    """Build a stable chat label that the AI must preserve in the final report."""
+    base_name = chat.get('custom_name') or chat.get('original_title') or 'Unknown chat'
+    source = normalize_source_name(chat.get('source'))
+    if source == 'vk':
+        return f"VK | {base_name}"
+    if source == 'max':
+        return f"MAX | {base_name}"
+    return base_name
+
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .max_client import init_max_manager, get_max_manager
 from .proxy_manager import get_proxy_manager
+from .source_router import fetch_chat_messages, get_source_label, normalize_source_name, SourceMessageFetchError
 from .summarizer import init_summarizer, get_summarizer, get_default_report_rules, get_default_negativists_rules
+from .vk_client import init_vk_manager, get_vk_manager
 from .bot import start_bot, stop_bot
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
-    AnalyzeNegativistsRequest, MaxAccountCreateRequest, MaxChatAddRequest
+    AnalyzeNegativistsRequest, MaxAccountCreateRequest, MaxChatAddRequest,
+    VkAccountCreateRequest, VkTokenUpdateRequest
 )
 
 load_dotenv()
@@ -97,6 +127,10 @@ async def lifespan(app: FastAPI):
     # Initialize Max messenger manager
     mm = init_max_manager()
     print("[Max] Max messenger manager initialized")
+
+    vk = init_vk_manager()
+    if vk:
+        print("[VK] VK manager initialized", flush=True)
 
     # Auto-start authorized Max accounts (reconnect with cached sessions)
     try:
@@ -180,6 +214,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Static files
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
 # Templates
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -467,9 +504,10 @@ async def export_report_to_sheets(request: Request):
 
 @app.get("/api/chats")
 async def get_chats(account_id: Optional[int] = None, complex_id: Optional[int] = None,
+                    account_key: Optional[str] = None,
                     monitored_only: bool = False):
     """Get chats with optional filters"""
-    chats = await db.get_chats(account_id, complex_id, monitored_only)
+    chats = await db.get_chats(account_id, complex_id, account_key, monitored_only)
     return {"chats": chats}
 
 
@@ -517,11 +555,6 @@ async def get_chat_topics(chat_id: int):
 @app.post("/api/reports/generate")
 async def generate_report(data: GenerateReportRequest):
     """Generate a report for selected complexes — AI summary if available, raw messages otherwise"""
-    try:
-        tm = get_telegram_manager()
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
     # Parse dates
     try:
         start_date = data.get_start_date()
@@ -586,56 +619,30 @@ async def generate_report(data: GenerateReportRequest):
                 except:
                     pass
 
-            # Get messages from appropriate source
-            source = chat.get('source') or 'telegram'
-            if source == 'max':
-                try:
-                    mm = get_max_manager()
-                    # Auto-reconnect if connection dropped
-                    max_acc = await db.get_max_account(chat['max_account_id'])
-                    if max_acc:
-                        await mm.ensure_connected(chat['max_account_id'], max_acc['phone'])
-                    messages = await mm.get_messages(
-                        account_id=chat['max_account_id'],
-                        chat_id=chat['telegram_id'],
-                        start_date=start_date,
-                        end_date=end_date,
-                    )
-                except Exception as e:
-                    chat_name = chat['custom_name'] or chat['original_title']
-                    print(
-                        f"[Report] ERROR fetching Max messages from {chat_name}: {e}\n"
-                        f"[Report] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
-                        flush=True
-                    )
-                    traceback.print_exc()
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
-                    )
-            else:
-                try:
-                    messages = await tm.get_messages(
-                        account_id=chat['account_id'],
-                        chat_telegram_id=chat['telegram_id'],
-                        start_date=start_date,
-                        end_date=end_date,
-                        topic_ids=topic_ids
-                    )
-                except Exception as e:
-                    chat_name = chat['custom_name'] or chat['original_title']
-                    print(
-                        f"[Report] ERROR fetching messages from {chat_name}: {e}\n"
-                        f"[Report] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
-                        flush=True
-                    )
-                    traceback.print_exc()
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."
-                    )
+            try:
+                messages = await fetch_chat_messages(
+                    chat=chat,
+                    start_date=start_date,
+                    end_date=end_date,
+                    topic_ids=topic_ids,
+                )
+            except SourceMessageFetchError as e:
+                chat_name = chat['custom_name'] or chat['original_title']
+                source = normalize_source_name(chat.get('source'))
+                source_label = get_source_label(source)
+                print(
+                    f"[Report] ERROR fetching {source_label} messages from {chat_name}: {e}\n"
+                    f"[Report] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                    flush=True
+                )
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Не удалось получить сообщения из {source_label} чата '{chat_name}': {e}. Проверьте подключение {source_label} аккаунта."
+                )
 
             chat_name = chat['custom_name'] or chat['original_title']
+            report_chat_name = build_report_chat_name(chat)
             content_filter = chat.get('content_filter', '')
 
             chat_data = {
@@ -648,6 +655,7 @@ async def generate_report(data: GenerateReportRequest):
             complex_data['chats'].append(chat_data)
             chats_with_messages.append({
                 'chat_name': chat_name,
+                'report_chat_name': report_chat_name,
                 'messages': messages,
                 'content_filter': content_filter
             })
@@ -727,11 +735,6 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             detail="AI-анализ не настроен. Добавьте OPENROUTER_API_KEY в .env файл."
         )
 
-    try:
-        tm = get_telegram_manager()
-    except RuntimeError:
-        raise HTTPException(status_code=400, detail="Telegram не настроен")
-
     # Parse dates
     try:
         start_date = data.get_start_date()
@@ -756,58 +759,34 @@ async def analyze_negativists(data: AnalyzeNegativistsRequest):
             except:
                 pass
 
-        # Get messages from appropriate source
-        source = chat.get('source') or 'telegram'
-        if source == 'max':
-            try:
-                mm = get_max_manager()
-                max_acc = await db.get_max_account(chat['max_account_id'])
-                if max_acc:
-                    await mm.ensure_connected(chat['max_account_id'], max_acc['phone'])
-                messages = await mm.get_messages(
-                    account_id=chat['max_account_id'],
-                    chat_id=chat['telegram_id'],
-                    start_date=start_date,
-                    end_date=end_date,
-                )
-            except Exception as e:
-                chat_name = chat['custom_name'] or chat['original_title']
-                print(
-                    f"[Negativists] ERROR fetching Max messages from {chat_name}: {e}\n"
-                    f"[Negativists] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
-                    flush=True
-                )
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Не удалось получить сообщения из Max чата '{chat_name}': {e}. Проверьте подключение Max аккаунта."
-                )
-        else:
-            try:
-                messages = await tm.get_messages(
-                    account_id=chat['account_id'],
-                    chat_telegram_id=chat['telegram_id'],
-                    start_date=start_date,
-                    end_date=end_date,
-                    topic_ids=topic_ids
-                )
-            except Exception as e:
-                chat_name = chat['custom_name'] or chat['original_title']
-                print(
-                    f"[Negativists] ERROR fetching messages from {chat_name}: {e}\n"
-                    f"[Negativists] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
-                    flush=True
-                )
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Не удалось получить сообщения из чата '{chat_name}': {e}. Проверьте подключение Telegram аккаунта."
-                )
+        try:
+            messages = await fetch_chat_messages(
+                chat=chat,
+                start_date=start_date,
+                end_date=end_date,
+                topic_ids=topic_ids,
+            )
+        except SourceMessageFetchError as e:
+            chat_name = chat['custom_name'] or chat['original_title']
+            source = normalize_source_name(chat.get('source'))
+            source_label = get_source_label(source)
+            print(
+                f"[Negativists] ERROR fetching {source_label} messages from {chat_name}: {e}\n"
+                f"[Negativists] Context: {format_chat_log_context(chat, start_date, end_date, topic_ids)}",
+                flush=True
+            )
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Не удалось получить сообщения из {source_label} чата '{chat_name}': {e}. Проверьте подключение {source_label} аккаунта."
+            )
 
         chat_name = chat['custom_name'] or chat['original_title']
+        report_chat_name = build_report_chat_name(chat)
         content_filter = chat.get('content_filter', '')
         chats_with_messages.append({
             'chat_name': chat_name,
+            'report_chat_name': report_chat_name,
             'messages': messages,
             'content_filter': content_filter
         })
@@ -1005,6 +984,140 @@ async def add_max_chat(account_id: int, data: MaxChatAddRequest):
     return {"id": chat_id, "message": "Max chat added"}
 
 
+# ============== VK Messenger Endpoints ==============
+
+@app.get("/api/vk/accounts")
+async def get_vk_accounts():
+    accounts = await db.get_vk_accounts()
+    return {"accounts": accounts}
+
+
+@app.post("/api/vk/accounts")
+async def create_vk_account(data: VkAccountCreateRequest):
+    account_id = await db.create_vk_account(data.name)
+    return {"id": account_id, "message": "VK account created"}
+
+
+@app.put("/api/vk/accounts/{account_id}/token")
+async def set_vk_account_token(account_id: int, data: VkTokenUpdateRequest):
+    account = await db.get_vk_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="VK account not found")
+
+    access_token = extract_vk_access_token(data.access_token)
+    if not access_token:
+        raise HTTPException(status_code=400, detail="VK access token is required")
+
+    vk = get_vk_manager()
+    try:
+        current_user = await vk.get_current_user(access_token)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось проверить VK token: {e}")
+
+    display_name = " ".join(filter(None, [current_user.get("first_name"), current_user.get("last_name")])).strip()
+    if display_name:
+        await db.update_vk_account_name(account_id, display_name)
+
+    await db.update_vk_account_tokens(
+        account_id,
+        vk_user_id=current_user.get("id"),
+        access_token=access_token,
+        refresh_token=None,
+        token_expires_at=None,
+        is_authorized=True,
+    )
+
+    return {
+        "message": "VK token сохранён",
+        "vk_user_id": current_user.get("id"),
+        "name": display_name or account["name"],
+    }
+
+
+@app.delete("/api/vk/accounts/{account_id}")
+async def delete_vk_account(account_id: int):
+    account = await db.get_vk_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="VK account not found")
+    await db.delete_vk_account(account_id)
+    return {"message": "VK account deleted"}
+
+
+@app.post("/api/vk/accounts/{account_id}/auth/start")
+async def start_vk_auth(account_id: int, request: Request):
+    account = await db.get_vk_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="VK account not found")
+
+    vk = get_vk_manager()
+    if not vk.oauth_enabled:
+        raise HTTPException(status_code=400, detail="VK OAuth сейчас не настроен. Используйте ручной ввод access token.")
+
+    auth_url = vk.build_auth_url(account_id, str(request.base_url))
+    return {"auth_url": auth_url}
+
+
+@app.get("/api/vk/auth/callback")
+async def vk_auth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    app_root = str(request.base_url).rstrip("/") + "/"
+
+    if error:
+        return RedirectResponse(url=f"{app_root}?vk_auth=error&vk_message={error}")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing VK OAuth code/state")
+
+    vk = get_vk_manager()
+    account_id = vk.pop_pending_account_id(state)
+    if not account_id:
+        raise HTTPException(status_code=400, detail="VK auth state is expired or invalid")
+
+    redirect_uri = vk.build_redirect_uri(str(request.base_url))
+    token_payload = await vk.exchange_code(code=code, redirect_uri=redirect_uri)
+    access_token = token_payload.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="VK did not return access_token")
+
+    current_user = await vk.get_current_user(access_token)
+    display_name = " ".join(filter(None, [current_user.get("first_name"), current_user.get("last_name")])).strip()
+    if display_name:
+        await db.update_vk_account_name(account_id, display_name)
+
+    await db.update_vk_account_tokens(
+        account_id,
+        vk_user_id=current_user.get("id"),
+        access_token=access_token,
+        refresh_token=token_payload.get("refresh_token"),
+        token_expires_at=vk.token_expiry_iso(token_payload.get("expires_in")),
+        is_authorized=True,
+    )
+
+    return RedirectResponse(url=f"{app_root}?vk_auth=success&vk_account_id={account_id}")
+
+
+@app.post("/api/vk/accounts/{account_id}/sync")
+async def sync_vk_chats(account_id: int):
+    account = await db.get_vk_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="VK account not found")
+    if not account.get("access_token"):
+        raise HTTPException(status_code=400, detail="VK account not authorized")
+
+    vk = get_vk_manager()
+    dialogs = await vk.get_dialogs(account["access_token"])
+
+    synced = 0
+    for dialog in dialogs:
+        await db.upsert_vk_chat(
+            vk_chat_id=dialog["chat_id"],
+            vk_account_id=account_id,
+            original_title=dialog["title"],
+        )
+        synced += 1
+
+    return {"message": f"Синхронизировано чатов VK: {synced}", "count": synced}
+
+
 # ============== Proxy Management ==============
 
 @app.get("/api/proxies")
@@ -1064,6 +1177,7 @@ async def health_check():
         'status': 'ok',
         'telegram_configured': False,
         'max_configured': False,
+        'vk_configured': False,
         'summarizer_configured': False,
         'proxy': {
             'configured': False,
@@ -1077,6 +1191,8 @@ async def health_check():
             'max_total': 0,
             'max_authorized': 0,
             'max_connected': 0,
+            'vk_total': 0,
+            'vk_authorized': 0,
         }
     }
 
@@ -1107,6 +1223,15 @@ async def health_check():
         pass
 
     try:
+        get_vk_manager()
+        status['vk_configured'] = True
+        vk_accounts = await db.get_vk_accounts()
+        status['accounts']['vk_total'] = len(vk_accounts)
+        status['accounts']['vk_authorized'] = sum(1 for acc in vk_accounts if acc['is_authorized'])
+    except RuntimeError:
+        status['vk_configured'] = False
+
+    try:
         get_summarizer()
         status['summarizer_configured'] = True
     except RuntimeError:
@@ -1130,6 +1255,8 @@ async def health_check():
     if status['telegram_configured'] and status['accounts']['telegram_authorized'] and status['accounts']['telegram_connected'] == 0:
         status['status'] = 'degraded'
     if status['max_configured'] and status['accounts']['max_authorized'] and status['accounts']['max_connected'] == 0:
+        status['status'] = 'degraded'
+    if status.get('vk_configured') and status['accounts']['vk_authorized'] == 0 and status['accounts']['vk_total'] > 0:
         status['status'] = 'degraded'
     if status['proxy']['configured'] and status['accounts']['telegram_authorized'] and status['proxy']['working_count'] == 0:
         status['status'] = 'degraded'

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI-агент охранки</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <style>
         * {
             box-sizing: border-box;
@@ -494,9 +495,29 @@
 <body>
     <div class="container">
         <header>
-            <div>
-                <h1>AI-агент охранки</h1>
-                <p>Мониторинг и суммаризация чатов строительных объектов</p>
+            <div style="display: flex; align-items: center; gap: 14px; align-self: stretch;">
+                <!-- Logo shape: circle + bar + dots mirroring the icon -->
+                <div style="position: relative; width: 72px; align-self: stretch; flex-shrink: 0;">
+                    <!-- White circle with logo -->
+                    <div style="width: 52px; height: 52px; border-radius: 50%; background: white; display: flex; align-items: center; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%);">
+                        <div style="width: 46px; height: 46px; border-radius: 50%; border: 1.5px solid #800020; display: flex; align-items: center; justify-content: center;">
+                            <img src="/static/favicon.png" style="width: 34px; height: 34px;">
+                        </div>
+                    </div>
+                    <!-- Bar extending right from circle center -->
+                    <div style="position: absolute; left: 50px; top: 50%; transform: translateY(-50%); width: 15px; height: 4px; background: white; border-radius: 0 3px 3px 0;"></div>
+                    <!-- Dots from bar down to header bottom -->
+                    <div style="position: absolute; left: 59px; top: calc(50% + 8px); bottom: 0; display: flex; flex-direction: column; justify-content: flex-start; gap: 4px;">
+                        <div style="width: 5px; height: 5px; background: white; border-radius: 50%; flex-shrink: 0;"></div>
+                        <div style="width: 5px; height: 5px; background: white; border-radius: 50%; flex-shrink: 0;"></div>
+                        <div style="width: 5px; height: 5px; background: white; border-radius: 50%; flex-shrink: 0;"></div>
+                        <div style="width: 5px; height: 5px; background: white; border-radius: 50%; flex-shrink: 0;"></div>
+                    </div>
+                </div>
+                <div>
+                    <h1>AI-агент охранки</h1>
+                    <p>Мониторинг и суммаризация чатов строительных объектов</p>
+                </div>
             </div>
             <div style="display: flex; align-items: center; gap: 15px;">
                 <div id="proxy-widget" style="position: relative;">
@@ -540,6 +561,13 @@
                     <button class="btn btn-primary btn-small" onclick="showAddMaxAccountModal()">+ Добавить</button>
                 </h2>
                 <div id="max-accounts-list"></div>
+            </div>
+            <div class="section">
+                <h2 class="section-title">
+                    VK аккаунты
+                    <button class="btn btn-primary btn-small" onclick="showAddVkAccountModal()">+ Добавить</button>
+                </h2>
+                <div id="vk-accounts-list"></div>
             </div>
         </div>
 
@@ -771,6 +799,38 @@
         </div>
     </div>
 
+    <div id="add-vk-account-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Добавить VK аккаунт</h3>
+            <div class="form-group">
+                <label>Название (для себя):</label>
+                <input type="text" id="vk-account-name" placeholder="Например: VK основной">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="createVkAccount()">Добавить</button>
+                <button class="btn btn-secondary" onclick="closeModal('add-vk-account-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="vk-token-modal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h3 class="modal-title">VK access token</h3>
+            <input type="hidden" id="vk-token-account-id">
+            <div class="form-group">
+                <label>Токен пользователя VK:</label>
+                <textarea id="vk-access-token" placeholder="Вставь сюда user access token" style="width: 100%; min-height: 160px; padding: 12px; border: 1px solid #d0d7de; border-radius: 8px; resize: vertical; font-family: monospace; font-size: 12px;"></textarea>
+            </div>
+            <p style="color: #666; font-size: 13px; margin-bottom: 15px;">
+                Можно вставить либо сам token, либо полный URL вида <code>https://oauth.vk.com/blank.html#access_token=...</code>.
+            </p>
+            <div class="input-group">
+                <button class="btn btn-primary" onclick="saveVkToken()">Сохранить токен</button>
+                <button class="btn btn-secondary" onclick="closeModal('vk-token-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Add Complex Modal -->
     <div id="add-complex-modal" class="modal">
         <div class="modal-content">
@@ -851,7 +911,7 @@
                 document.getElementById(btn.dataset.tab + '-panel').classList.add('active');
 
                 // Load data for the tab
-                if (btn.dataset.tab === 'accounts') { loadAccounts(); loadMaxAccounts(); loadProxies(); }
+                if (btn.dataset.tab === 'accounts') { loadAccounts(); loadMaxAccounts(); loadVkAccounts(); loadProxies(); }
                 if (btn.dataset.tab === 'complexes') loadComplexes();
                 if (btn.dataset.tab === 'chats') {
                     loadAccountsForFilter();
@@ -883,6 +943,17 @@
             showModal('add-complex-modal');
         }
 
+        function showAddVkAccountModal() {
+            document.getElementById('vk-account-name').value = '';
+            showModal('add-vk-account-modal');
+        }
+
+        function showVkTokenModal(accountId) {
+            document.getElementById('vk-token-account-id').value = accountId;
+            document.getElementById('vk-access-token').value = '';
+            showModal('vk-token-modal');
+        }
+
         // API calls
         async function api(url, method = 'GET', data = null) {
             const options = {
@@ -904,6 +975,26 @@
                 throw new Error(msg);
             }
             return response.json();
+        }
+
+        function handleVkAuthRedirectResult() {
+            const url = new URL(window.location.href);
+            const status = url.searchParams.get('vk_auth');
+            if (!status) return;
+
+            const message = url.searchParams.get('vk_message');
+            if (status === 'success') {
+                loadVkAccounts();
+                loadChats();
+                alert('VK аккаунт авторизован');
+            } else if (status === 'error') {
+                alert('Ошибка авторизации VK: ' + (message || 'неизвестная ошибка'));
+            }
+
+            url.searchParams.delete('vk_auth');
+            url.searchParams.delete('vk_message');
+            url.searchParams.delete('vk_account_id');
+            window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
         }
 
         // Accounts
@@ -1107,6 +1198,102 @@
         async function syncMaxChats(accountId) {
             try {
                 const result = await api(`/api/max/accounts/${accountId}/sync`, 'POST');
+                alert(result.message);
+                loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // =================== VK Accounts ===================
+        async function loadVkAccounts() {
+            const container = document.getElementById('vk-accounts-list');
+            try {
+                const data = await api('/api/vk/accounts');
+                if (data.accounts.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет добавленных VK аккаунтов</div>';
+                    return;
+                }
+                container.innerHTML = data.accounts.map(acc => `
+                    <div class="card" style="padding: 10px 15px;">
+                        <div style="display: grid; grid-template-columns: 250px 160px 1fr auto; align-items: center; gap: 10px;">
+                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
+                            <div style="color: #666; font-size: 13px;">${acc.vk_user_id ? ('id' + acc.vk_user_id) : 'не привязан'}</div>
+                            <div></div>
+                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                                ${!acc.is_authorized
+                                    ? `<button class="btn btn-primary btn-small" onclick="showVkTokenModal(${acc.id})">Ввести токен</button>
+                                       <button class="btn btn-secondary btn-small" onclick="startVkAuth(${acc.id})">OAuth</button>`
+                                    : `<button class="btn btn-success btn-small" onclick="syncVkChats(${acc.id})">Синхронизировать</button>
+                                       <button class="btn btn-secondary btn-small" onclick="showVkTokenModal(${acc.id})">Обновить токен</button>`}
+                                <button class="btn btn-danger btn-small" onclick="deleteVkAccount(${acc.id})">Удалить</button>
+                                ${acc.is_authorized
+                                    ? '<span class="badge badge-success">Авторизован</span>'
+                                    : '<span class="badge badge-warning">Не авторизован</span>'}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
+        }
+
+        async function createVkAccount() {
+            const name = document.getElementById('vk-account-name').value.trim();
+            if (!name) {
+                alert('Укажите название аккаунта');
+                return;
+            }
+            try {
+                await api('/api/vk/accounts', 'POST', { name });
+                closeModal('add-vk-account-modal');
+                loadVkAccounts();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function saveVkToken() {
+            const accountId = document.getElementById('vk-token-account-id').value;
+            const accessToken = document.getElementById('vk-access-token').value.trim();
+            if (!accessToken) {
+                alert('Вставь VK access token');
+                return;
+            }
+            try {
+                await api(`/api/vk/accounts/${accountId}/token`, 'PUT', { access_token: accessToken });
+                closeModal('vk-token-modal');
+                loadVkAccounts();
+                alert('VK token сохранён');
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteVkAccount(id) {
+            if (!confirm('Удалить VK аккаунт?')) return;
+            try {
+                await api(`/api/vk/accounts/${id}`, 'DELETE');
+                loadVkAccounts();
+                loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function startVkAuth(accountId) {
+            try {
+                const result = await api(`/api/vk/accounts/${accountId}/auth/start`, 'POST');
+                window.location.href = result.auth_url;
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function syncVkChats(accountId) {
+            try {
+                const result = await api(`/api/vk/accounts/${accountId}/sync`, 'POST');
                 alert(result.message);
                 loadChats();
             } catch (e) {
@@ -1388,13 +1575,20 @@
         async function loadAccountsForFilter() {
             const select = document.getElementById('chats-account-filter');
             try {
-                const [tgData, maxData] = await Promise.all([
+                const [tgData, maxData, vkData] = await Promise.all([
                     api('/api/accounts'),
-                    api('/api/max/accounts')
+                    api('/api/max/accounts'),
+                    api('/api/vk/accounts')
                 ]);
                 let options = '<option value="">Все аккаунты</option>';
                 if (tgData.accounts.length > 0) {
-                    options += tgData.accounts.map(a => `<option value="${a.id}">TG: ${a.name}</option>`).join('');
+                    options += tgData.accounts.map(a => `<option value="telegram:${a.id}">TG: ${a.name}</option>`).join('');
+                }
+                if (maxData.accounts.length > 0) {
+                    options += maxData.accounts.map(a => `<option value="max:${a.id}">Max: ${a.name}</option>`).join('');
+                }
+                if (vkData.accounts.length > 0) {
+                    options += vkData.accounts.map(a => `<option value="vk:${a.id}">VK: ${a.name}</option>`).join('');
                 }
                 select.innerHTML = options;
             } catch (e) {
@@ -1422,7 +1616,7 @@
             const monitoredOnly = document.getElementById('chats-monitored-filter').checked;
 
             let url = '/api/chats?';
-            if (accountId) url += `account_id=${accountId}&`;
+            if (accountId) url += `account_key=${encodeURIComponent(accountId)}&`;
             if (complexId) url += `complex_id=${complexId}&`;
             if (monitoredOnly) url += `monitored_only=true`;
 
@@ -1436,6 +1630,8 @@
                     const source = chat.source || 'telegram';
                     const sourceBadge = source === 'max'
                         ? '<span class="badge" style="background:#1976d2;color:white;">Max</span>'
+                        : source === 'vk'
+                        ? '<span class="badge" style="background:#4a76a8;color:white;">VK</span>'
                         : '<span class="badge" style="background:#0088cc;color:white;">TG</span>';
                     return `
                     <div class="chat-item ${chat.is_monitored ? 'monitored' : ''}">
@@ -2154,8 +2350,10 @@
         }
 
         // Initial load
+        handleVkAuthRedirectResult();
         loadAccounts();
         loadMaxAccounts();
+        loadVkAccounts();
         loadProxies();
     </script>
 </body>

@@ -127,19 +127,29 @@ class MaxClientManager:
         if not client:
             raise RuntimeError(f"No Max client for account {account_id}")
 
-        try:
-            return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=backward)
-        except Exception as e:
-            if e.__class__.__name__ == "SocketNotConnectedError":
-                print(f"[MaxClient] Socket dropped for account {account_id}, reconnecting and retrying", flush=True)
+        socket_errors = ("SocketNotConnectedError", "SocketSendError", "SocketError")
+
+        for attempt in range(3):
+            try:
+                # On retries use smaller page size to avoid large responses breaking the socket
+                fetch_size = backward if attempt == 0 else min(backward, 50)
+                return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=fetch_size)
+            except Exception as e:
+                err_name = e.__class__.__name__
+                if err_name not in socket_errors or attempt == 2:
+                    raise
+                print(
+                    f"[MaxClient] Socket error ({err_name}) attempt {attempt + 1}/3 "
+                    f"for account {account_id} chat {chat_id}, reconnecting...",
+                    flush=True
+                )
                 self._mark_disconnected(account_id)
                 if not await self._ensure_runtime_connection(account_id, force_restart=True):
-                    raise RuntimeError(f"Max account {account_id} is disconnected")
+                    raise RuntimeError(f"Max account {account_id} failed to reconnect")
                 client = self._clients.get(account_id)
                 if not client:
                     raise RuntimeError(f"No Max client for account {account_id} after reconnect")
-                return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=backward)
-            raise
+                await asyncio.sleep(2.0)
 
     async def start_auth(self, account_id: int, phone: str) -> dict:
         """Start Max authentication by launching client in background"""
@@ -508,13 +518,18 @@ class MaxClientManager:
             await self.disconnect_account(account_id)
 
     async def _ensure_runtime_connection(self, account_id: int, force_restart: bool = False) -> bool:
+        # Save phone BEFORE disconnect (disconnect_account deletes it)
+        phone = self._phones.get(account_id)
+
         if force_restart and account_id in self._tasks:
             await self.disconnect_account(account_id)
+            # Restore phone after disconnect wiped it
+            if phone:
+                self._phones[account_id] = phone
 
         if self._is_socket_connected(account_id):
             return True
 
-        phone = self._phones.get(account_id)
         if not phone:
             print(f"[MaxClient] Missing phone for account {account_id}, cannot reconnect", flush=True)
             return False
