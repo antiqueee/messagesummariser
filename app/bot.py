@@ -333,7 +333,9 @@ async def generate_full_report(start_date: datetime, end_date: datetime, allowed
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
             chats_with_messages.append({
+                'chat_id': chat['id'],
                 'chat_name': chat_name,
+                'source': chat.get('source') or 'telegram',
                 'messages': messages,
                 'content_filter': content_filter
             })
@@ -414,14 +416,32 @@ async def cb_negativists(callback: CallbackQuery):
             name = neg.get('name', 'Неизвестный')
             username = neg.get('username')
             status = neg.get('status', '')
+            description = neg.get('description', '')
+            category = neg.get('category', 'critic')
             tags = neg.get('tags', [])
+            category_label = {
+                'critic': 'системный критик',
+                'activist': 'призывает к действиям',
+                'organizer': 'организатор',
+            }.get(category, category)
 
             text += f"{emoji} {i}. {name}"
             if username:
                 text += f" (@{username})"
             if tags:
                 text += f" [{', '.join(tags)}]"
-            text += f"\n{status}\n\n"
+            text += f"\nТип: {category_label}\n{status}"
+            if description and description != status:
+                text += f"\n\n{description}"
+            evidence = neg.get('evidence') or []
+            if evidence:
+                text += "\n\nОснования:"
+                for item in evidence[:3]:
+                    chat_name = item.get('chat_name') or 'чат'
+                    date = item.get('date') or ''
+                    quote = item.get('quote') or ''
+                    text += f"\n— {chat_name}{f' · {date}' if date else ''}: «{quote}»"
+            text += "\n\n"
 
         if result.get('analysis_notes'):
             text += f"\nЗаметки: {result['analysis_notes']}"
@@ -472,7 +492,9 @@ async def analyze_all_negativists(start_date: datetime, end_date: datetime, allo
             chat_name = chat['custom_name'] or chat['original_title']
             content_filter = chat.get('content_filter', '')
             chats_with_messages.append({
+                'chat_id': chat['id'],
                 'chat_name': chat_name,
+                'source': chat.get('source') or 'telegram',
                 'messages': messages,
                 'content_filter': content_filter
             })

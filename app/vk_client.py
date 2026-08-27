@@ -1,3 +1,4 @@
+import asyncio
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -73,20 +74,32 @@ class VkClientManager:
 
     async def api_call(self, method: str, access_token: str, **params) -> dict:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{VK_API_URL}/{method}",
-                params={
-                    **params,
-                    "access_token": access_token,
-                    "v": VK_API_VERSION,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-            if "error" in payload:
-                msg = payload["error"].get("error_msg") or str(payload["error"])
-                raise RuntimeError(f"VK API {method} failed: {msg}")
-            return payload["response"]
+            last_msg = None
+            for attempt in range(5):
+                response = await client.get(
+                    f"{VK_API_URL}/{method}",
+                    params={
+                        **params,
+                        "access_token": access_token,
+                        "v": VK_API_VERSION,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if "error" not in payload:
+                    return payload["response"]
+
+                error = payload["error"]
+                msg = error.get("error_msg") or str(error)
+                last_msg = msg
+                if error.get("error_code") != 6 or attempt == 4:
+                    raise RuntimeError(f"VK API {method} failed: {msg}")
+
+                delay = 0.4 * (attempt + 1)
+                print(f"[VK] Rate limited on {method}, retrying in {delay:.1f}s", flush=True)
+                await asyncio.sleep(delay)
+
+            raise RuntimeError(f"VK API {method} failed: {last_msg}")
 
     async def get_current_user(self, access_token: str) -> dict:
         users = await self.api_call("users.get", access_token, fields="screen_name")
@@ -168,6 +181,7 @@ class VkClientManager:
             if not items:
                 break
 
+            self._prime_sender_cache_from_extended_response(response, sender_cache)
             await self._prime_sender_cache(access_token, items, sender_cache)
 
             for item in items:
@@ -225,6 +239,21 @@ class VkClientManager:
                 groups = await self.api_call("groups.getById", access_token, group_ids=",".join(map(str, chunk)))
                 for group in groups:
                     sender_cache[-int(group["id"])] = group.get("name") or f"club{group['id']}"
+
+    def _prime_sender_cache_from_extended_response(self, response: dict, sender_cache: dict[int, str]) -> None:
+        for user in response.get("profiles") or []:
+            user_id = int(user.get("id") or 0)
+            if not user_id:
+                continue
+            sender_cache[user_id] = " ".join(
+                filter(None, [user.get("first_name"), user.get("last_name")])
+            ) or str(user_id)
+
+        for group in response.get("groups") or []:
+            group_id = int(group.get("id") or 0)
+            if not group_id:
+                continue
+            sender_cache[-group_id] = group.get("name") or f"club{group_id}"
 
     def _attachments_placeholder(self, item: dict) -> str:
         attachments = item.get("attachments") or []

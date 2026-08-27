@@ -81,9 +81,15 @@ async def init_db():
                 phone TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 is_authorized INTEGER DEFAULT 0,
+                is_send_only INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
             )
         """)
+
+        try:
+            await db.execute("ALTER TABLE max_accounts ADD COLUMN is_send_only INTEGER DEFAULT 0")
+        except:
+            pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS vk_accounts (
@@ -159,6 +165,67 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS complex_max_targets (
+                complex_id INTEGER PRIMARY KEY,
+                max_account_id INTEGER,
+                max_chat_id INTEGER,
+                chat_title TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (complex_id) REFERENCES complexes(id),
+                FOREIGN KEY (max_account_id) REFERENCES max_accounts(id)
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS max_delivery_chats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                max_account_id INTEGER NOT NULL,
+                max_chat_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                chat_type TEXT,
+                synced_at TEXT NOT NULL,
+                FOREIGN KEY (max_account_id) REFERENCES max_accounts(id),
+                UNIQUE(max_account_id, max_chat_id)
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS report_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_type TEXT NOT NULL,
+                complex_id INTEGER,
+                complex_name TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                original_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                final_text TEXT NOT NULL,
+                google_doc_status TEXT,
+                google_doc_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (complex_id) REFERENCES complexes(id)
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS max_delivery_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_history_id INTEGER,
+                complex_id INTEGER,
+                max_account_id INTEGER,
+                max_chat_id INTEGER,
+                status TEXT NOT NULL,
+                sent_message_ids TEXT,
+                error_message TEXT,
+                sent_at TEXT NOT NULL,
+                FOREIGN KEY (report_history_id) REFERENCES report_history(id),
+                FOREIGN KEY (complex_id) REFERENCES complexes(id),
+                FOREIGN KEY (max_account_id) REFERENCES max_accounts(id)
+            )
+        """)
+
         await db.commit()
 
 
@@ -206,11 +273,14 @@ async def delete_account(account_id: int):
 
 
 # Max account operations
-async def create_max_account(phone: str, name: str) -> int:
+async def create_max_account(phone: str, name: str, is_send_only: bool = False) -> int:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO max_accounts (phone, name, is_authorized, created_at) VALUES (?, ?, 0, ?)",
-            (phone, name, datetime.now().isoformat())
+            """
+            INSERT INTO max_accounts (phone, name, is_authorized, is_send_only, created_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            (phone, name, 1 if is_send_only else 0, datetime.now().isoformat())
         )
         await db.commit()
         return cursor.lastrowid
@@ -244,8 +314,57 @@ async def update_max_account_authorized(account_id: int, is_authorized: bool):
 async def delete_max_account(account_id: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM chats WHERE max_account_id = ? AND source = 'max'", (account_id,))
+        await db.execute("DELETE FROM complex_max_targets WHERE max_account_id = ?", (account_id,))
+        await db.execute("DELETE FROM max_delivery_chats WHERE max_account_id = ?", (account_id,))
         await db.execute("DELETE FROM max_accounts WHERE id = ?", (account_id,))
         await db.commit()
+
+
+async def replace_max_delivery_chats(account_id: int, chats: list[dict]) -> int:
+    """Replace cached delivery-only Max chat metadata for a service account."""
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM max_delivery_chats WHERE max_account_id = ?", (account_id,))
+        for chat in chats:
+            await db.execute(
+                """
+                INSERT INTO max_delivery_chats (
+                    max_account_id, max_chat_id, title, chat_type, synced_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    account_id,
+                    int(chat["chat_id"]),
+                    str(chat.get("title") or chat["chat_id"]),
+                    str(chat.get("type") or ""),
+                    now,
+                )
+            )
+        await db.commit()
+        return len(chats)
+
+
+async def get_max_delivery_chats(account_id: Optional[int] = None) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT
+                dc.*,
+                ma.name AS account_name,
+                ma.phone AS account_phone,
+                ma.is_send_only AS account_is_send_only
+            FROM max_delivery_chats dc
+            JOIN max_accounts ma ON ma.id = dc.max_account_id
+        """
+        params = []
+        if account_id is not None:
+            query += " WHERE dc.max_account_id = ?"
+            params.append(account_id)
+        query += " ORDER BY ma.name, dc.title"
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 async def create_vk_account(name: str) -> int:
@@ -333,7 +452,16 @@ async def create_complex(name: str) -> int:
 async def get_complexes() -> list[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM complexes ORDER BY sort_order, name")
+        cursor = await db.execute("""
+            SELECT
+                c.*,
+                t.max_account_id AS max_target_account_id,
+                t.max_chat_id AS max_target_chat_id,
+                t.chat_title AS max_target_chat_title
+            FROM complexes c
+            LEFT JOIN complex_max_targets t ON t.complex_id = c.id
+            ORDER BY c.sort_order, c.name
+        """)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -341,7 +469,16 @@ async def get_complexes() -> list[dict]:
 async def get_complex(complex_id: int) -> Optional[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM complexes WHERE id = ?", (complex_id,))
+        cursor = await db.execute("""
+            SELECT
+                c.*,
+                t.max_account_id AS max_target_account_id,
+                t.max_chat_id AS max_target_chat_id,
+                t.chat_title AS max_target_chat_title
+            FROM complexes c
+            LEFT JOIN complex_max_targets t ON t.complex_id = c.id
+            WHERE c.id = ?
+        """, (complex_id,))
         row = await cursor.fetchone()
         return dict(row) if row else None
 
@@ -365,11 +502,127 @@ async def set_complex_sheet(complex_id: int, google_sheet_id: Optional[str]):
         await db.commit()
 
 
+async def set_complex_max_target(
+        complex_id: int,
+        max_account_id: Optional[int],
+        max_chat_id: Optional[int],
+        chat_title: Optional[str] = None,
+):
+    """Save or clear the Max chat used for sending reports for a complex."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        if max_account_id and max_chat_id:
+            await db.execute(
+                """
+                INSERT INTO complex_max_targets (
+                    complex_id, max_account_id, max_chat_id, chat_title, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(complex_id) DO UPDATE SET
+                    max_account_id = excluded.max_account_id,
+                    max_chat_id = excluded.max_chat_id,
+                    chat_title = excluded.chat_title,
+                    updated_at = excluded.updated_at
+                """,
+                (complex_id, max_account_id, max_chat_id, chat_title, datetime.now().isoformat())
+            )
+        else:
+            await db.execute("DELETE FROM complex_max_targets WHERE complex_id = ?", (complex_id,))
+        await db.commit()
+
+
 async def delete_complex(complex_id: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("UPDATE chats SET complex_id = NULL WHERE complex_id = ?", (complex_id,))
+        await db.execute("DELETE FROM complex_max_targets WHERE complex_id = ?", (complex_id,))
         await db.execute("DELETE FROM complexes WHERE id = ?", (complex_id,))
         await db.commit()
+
+
+async def save_report_history(
+        *,
+        report_type: str,
+        complex_id: Optional[int],
+        complex_name: str,
+        period_start: str,
+        period_end: str,
+        original_text: str,
+        edited_text: str,
+        google_doc_status: Optional[str] = None,
+        google_doc_error: Optional[str] = None,
+) -> int:
+    final_text = edited_text or original_text
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO report_history (
+                report_type, complex_id, complex_name, period_start, period_end,
+                original_text, edited_text, final_text,
+                google_doc_status, google_doc_error, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                report_type, complex_id, complex_name, period_start, period_end,
+                original_text, edited_text, final_text,
+                google_doc_status, google_doc_error, now, now,
+            )
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def update_report_history_doc_status(
+        report_history_id: int,
+        google_doc_status: Optional[str],
+        google_doc_error: Optional[str] = None,
+):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE report_history
+            SET google_doc_status = ?, google_doc_error = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (google_doc_status, google_doc_error, datetime.now().isoformat(), report_history_id)
+        )
+        await db.commit()
+
+
+async def get_report_history(report_history_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM report_history WHERE id = ?", (report_history_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def log_max_delivery(
+        *,
+        report_history_id: Optional[int],
+        complex_id: Optional[int],
+        max_account_id: int,
+        max_chat_id: int,
+        status: str,
+        sent_message_ids: Optional[str] = None,
+        error_message: Optional[str] = None,
+) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO max_delivery_log (
+                report_history_id, complex_id, max_account_id, max_chat_id,
+                status, sent_message_ids, error_message, sent_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                report_history_id, complex_id, max_account_id, max_chat_id,
+                status, sent_message_ids, error_message, datetime.now().isoformat(),
+            )
+        )
+        await db.commit()
+        return cursor.lastrowid
 
 
 # Chat operations

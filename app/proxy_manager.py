@@ -88,6 +88,7 @@ def _iter_configured_proxy_urls() -> list[str]:
     env_urls = os.getenv('TELEGRAM_PROXY_URLS', '').strip()
     if env_urls:
         urls.extend(part.strip() for part in re.split(r'[\n,;]+', env_urls) if part.strip())
+        return urls
 
     proxy_file = os.getenv('TELEGRAM_PROXY_FILE', '').strip()
     candidate_paths: list[Path] = []

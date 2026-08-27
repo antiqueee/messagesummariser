@@ -4,4 +4,8 @@ __pycache__/
 .gitignore
 .env
 *.db
-# Note: sessions/ is NOT excluded - Telegram sessions are included in image
+data/
+sessions/
+*.session
+*.session-journal
+*.json

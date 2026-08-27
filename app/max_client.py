@@ -17,6 +17,89 @@ class MaxClientManager:
         self._locks: dict[int, asyncio.Lock] = {}
         self._ready: dict[int, asyncio.Event] = {}  # signals when client is connected
         self._phones: dict[int, str] = {}
+        self._auth_tokens: dict[int, str] = {}
+        self._patch_pymax_socket_unpacker()
+        self._patch_pymax_contact_attach_parser()
+
+    def _patch_pymax_socket_unpacker(self) -> None:
+        """Make pymax tolerate larger compressed sync packets from Max."""
+        try:
+            import lz4.block
+            import msgpack
+            from pymax.mixins.socket import SocketMixin
+        except ImportError:
+            return
+
+        if getattr(SocketMixin, "_messagesummariser_lz4_patch", False):
+            return
+
+        def _unpack_packet(client, data: bytes):
+            ver = int.from_bytes(data[0:1], "big")
+            cmd = int.from_bytes(data[1:3], "big")
+            seq = int.from_bytes(data[3:4], "big")
+            opcode = int.from_bytes(data[4:6], "big")
+            packed_len = int.from_bytes(data[6:10], "big", signed=False)
+            comp_flag = packed_len >> 24
+            payload_length = packed_len & 0xFFFFFF
+            payload_bytes = data[10: 10 + payload_length]
+
+            payload = None
+            if payload_bytes:
+                if comp_flag != 0:
+                    compressed_data = bytes(payload_bytes)
+                    decompressed = None
+                    for size in (99_999, 250_000, 500_000, 1_000_000, 2_000_000, 5_000_000):
+                        try:
+                            decompressed = lz4.block.decompress(compressed_data, uncompressed_size=size)
+                            break
+                        except lz4.block.LZ4BlockError:
+                            continue
+
+                    if decompressed is None:
+                        try:
+                            decompressed = lz4.block.decompress(compressed_data)
+                        except Exception:
+                            return None
+
+                    payload_bytes = decompressed
+
+                payload = msgpack.unpackb(payload_bytes, raw=False, strict_map_key=False)
+
+            return {
+                "ver": ver,
+                "cmd": cmd,
+                "seq": seq,
+                "opcode": opcode,
+                "payload": payload,
+            }
+
+        SocketMixin._unpack_packet = _unpack_packet
+        SocketMixin._messagesummariser_lz4_patch = True
+
+    def _patch_pymax_contact_attach_parser(self) -> None:
+        """Allow Max CONTACT attachments with missing optional fields."""
+        try:
+            from pymax.types import ContactAttach
+        except ImportError:
+            return
+
+        if getattr(ContactAttach, "_messagesummariser_optional_fields_patch", False):
+            return
+
+        def from_dict(cls, data):
+            first_name = data.get("firstName") or ""
+            last_name = data.get("lastName") or ""
+            name = data.get("name") or " ".join(filter(None, [first_name, last_name])) or str(data.get("contactId", ""))
+            return cls(
+                contact_id=data.get("contactId", 0),
+                first_name=first_name,
+                last_name=last_name,
+                name=name,
+                photo_url=data.get("photoUrl") or "",
+            )
+
+        ContactAttach.from_dict = classmethod(from_dict)
+        ContactAttach._messagesummariser_optional_fields_patch = True
 
     def _get_lock(self, account_id: int) -> asyncio.Lock:
         if account_id not in self._locks:
@@ -35,6 +118,25 @@ class MaxClientManager:
     def _mark_disconnected(self, account_id: int) -> None:
         if account_id in self._ready:
             self._ready[account_id].clear()
+
+    def _is_transient_socket_error(self, error: Exception) -> bool:
+        err_name = error.__class__.__name__
+        err_text = str(error).lower()
+        transient_names = {
+            "SocketNotConnectedError",
+            "SocketSendError",
+            "SocketError",
+            "TimeoutError",
+            "ConnectionError",
+            "OSError",
+        }
+        return (
+            err_name in transient_names
+            or "not connected" in err_text
+            or "connection" in err_text
+            or "socket" in err_text
+            or "timed out" in err_text
+        )
 
     def _extract_message_datetime(self, msg) -> Optional[datetime]:
         """Best-effort datetime extraction for pymax messages."""
@@ -136,7 +238,10 @@ class MaxClientManager:
                 return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=fetch_size)
             except Exception as e:
                 err_name = e.__class__.__name__
-                if err_name not in socket_errors or attempt == 2:
+                if (
+                    err_name not in socket_errors
+                    and not self._is_transient_socket_error(e)
+                ) or attempt == 2:
                     raise
                 print(
                     f"[MaxClient] Socket error ({err_name}) attempt {attempt + 1}/3 "
@@ -151,7 +256,7 @@ class MaxClientManager:
                     raise RuntimeError(f"No Max client for account {account_id} after reconnect")
                 await asyncio.sleep(2.0)
 
-    async def start_auth(self, account_id: int, phone: str) -> dict:
+    async def start_auth(self, account_id: int, phone: str, force_code: bool = False) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
             self._phones[account_id] = phone
@@ -164,11 +269,17 @@ class MaxClientManager:
                 except (asyncio.CancelledError, Exception):
                     pass
 
+            if force_code:
+                self._auth_tokens.pop(account_id, None)
+                session_db = Path(self._get_work_dir(account_id)) / "session.db"
+                if session_db.exists():
+                    session_db.unlink()
+
             try:
                 from pymax import SocketMaxClient
                 from pymax.payloads import UserAgentPayload
 
-                ua = UserAgentPayload(device_type="DESKTOP", app_version="25.12.13")
+                ua = UserAgentPayload(device_type="DESKTOP")
                 client = SocketMaxClient(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
@@ -179,6 +290,18 @@ class MaxClientManager:
 
                 self._clients[account_id] = client
                 self._ready[account_id] = asyncio.Event()
+
+                # No cached session yet: use a UI-driven SMS code flow instead of
+                # pymax's stdin prompt.
+                if getattr(client, "_token", None) is None:
+                    print(f"[MaxClient] Requesting SMS code for account {account_id}", flush=True)
+                    await client.connect(client.user_agent)
+                    temp_token = await client.request_code(phone)
+                    self._auth_tokens[account_id] = temp_token
+                    return {
+                        'status': 'code_required',
+                        'message': 'Код отправлен по SMS или в приложение Max. Введите его в форме.'
+                    }
 
                 # Register on_start handler to know when connected
                 @client.on_start
@@ -226,6 +349,48 @@ class MaxClientManager:
                 traceback.print_exc()
                 raise RuntimeError(f"Ошибка авторизации Max: {e}")
 
+    async def complete_auth_code(self, account_id: int, code: str) -> dict:
+        """Complete Max SMS-code auth and start the saved session."""
+        code = (code or "").strip()
+        if len(code) != 6 or not code.isdigit():
+            raise RuntimeError("Код Max должен состоять из 6 цифр")
+
+        async with self._get_lock(account_id):
+            phone = self._phones.get(account_id)
+            client = self._clients.get(account_id)
+            temp_token = self._auth_tokens.get(account_id)
+            if not client or not temp_token or not phone:
+                raise RuntimeError("Сначала нажмите 'Авторизовать', чтобы запросить код Max")
+
+            try:
+                await asyncio.wait_for(client.login_with_code(temp_token, code, start=False), timeout=30.0)
+                self._auth_tokens.pop(account_id, None)
+            except Exception as e:
+                raise RuntimeError(f"Не удалось подтвердить код Max: {e}") from e
+
+        await self.disconnect_account(account_id)
+        self._phones[account_id] = phone
+        return {"status": "success", "message": "Max аккаунт авторизован, сессия сохранена."}
+
+    async def resend_auth_code(self, account_id: int) -> dict:
+        """Ask Max to send another auth code for the current UI auth flow."""
+        async with self._get_lock(account_id):
+            phone = self._phones.get(account_id)
+            client = self._clients.get(account_id)
+            if not client or not phone:
+                raise RuntimeError("Сначала нажмите 'Авторизовать', чтобы запросить код Max")
+
+            try:
+                temp_token = await asyncio.wait_for(client.resend_code(phone), timeout=20.0)
+                self._auth_tokens[account_id] = temp_token
+            except Exception as e:
+                raise RuntimeError(f"Не удалось повторно отправить код Max: {e}") from e
+
+            return {
+                "status": "code_required",
+                "message": "Новый код Max запрошен. Проверьте SMS и приложение Max."
+            }
+
     async def ensure_connected(self, account_id: int, phone: str) -> bool:
         """Ensure client is connected. Auto-start if needed. Returns True if connected."""
         self._phones[account_id] = phone
@@ -241,21 +406,42 @@ class MaxClientManager:
         # Client exists but socket has dropped - force a reconnect
         if task_alive and is_ready and not socket_connected:
             print(f"[MaxClient] Client {account_id} lost socket connection, restarting", flush=True)
-            self._mark_disconnected(account_id)
+            return await self._ensure_runtime_connection(account_id, force_restart=True)
 
         # Client exists but not ready yet - wait a bit
         if task_alive and not is_ready:
             try:
                 if account_id in self._ready:
-                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=15.0)
-                    return self._is_socket_connected(account_id)
+                    await asyncio.wait_for(self._ready[account_id].wait(), timeout=20.0)
+                    if self._is_socket_connected(account_id):
+                        return True
             except asyncio.TimeoutError:
-                return False
+                pass
+
+            print(f"[MaxClient] Client {account_id} did not become ready, restarting", flush=True)
+            return await self._ensure_runtime_connection(account_id, force_restart=True)
 
         # Task dead or no client — reconnect
         print(f"[MaxClient] Auto-starting client for account {account_id}", flush=True)
         result = await self.start_auth(account_id, phone)
-        return result.get('status') == 'success'
+        if result.get('status') == 'success':
+            return True
+        if result.get('status') == 'auth_started' and account_id in self._ready:
+            try:
+                await asyncio.wait_for(self._ready[account_id].wait(), timeout=20.0)
+                return self._is_socket_connected(account_id)
+            except asyncio.TimeoutError:
+                print(f"[MaxClient] Client {account_id} auth start timed out, restarting once", flush=True)
+                result = await self.start_auth(account_id, phone)
+                if result.get('status') == 'success':
+                    return True
+                if result.get('status') == 'auth_started' and account_id in self._ready:
+                    try:
+                        await asyncio.wait_for(self._ready[account_id].wait(), timeout=30.0)
+                        return self._is_socket_connected(account_id)
+                    except asyncio.TimeoutError:
+                        return False
+        return False
 
     async def check_connected(self, account_id: int) -> bool:
         """Check if client is actually connected (task alive + ready)"""
@@ -343,11 +529,11 @@ class MaxClientManager:
             start_date: datetime,
             end_date: datetime,
             limit: int = 10000,
+            phone: Optional[str] = None,
     ) -> list[dict]:
         """Get messages from a Max chat within a date range"""
-        client = self._clients.get(account_id)
-        if not client:
-            raise RuntimeError(f"No Max client for account {account_id}")
+        if phone:
+            self._phones[account_id] = phone
 
         if not await self._ensure_runtime_connection(account_id):
             raise RuntimeError(f"Max client {account_id} is not connected")
@@ -435,6 +621,89 @@ class MaxClientManager:
         messages.sort(key=lambda item: item['date'])
         return messages[:limit]
 
+    def _split_outgoing_text(self, text: str, max_chars: int = 3500) -> list[str]:
+        """Split long report text into Max-friendly chunks without reading chat history."""
+        clean = (text or "").strip()
+        if not clean:
+            return []
+        chunks = []
+        current = ""
+        for paragraph in clean.split("\n\n"):
+            part = paragraph.strip()
+            if not part:
+                continue
+            candidate = f"{current}\n\n{part}".strip() if current else part
+            if len(candidate) <= max_chars:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            while len(part) > max_chars:
+                chunks.append(part[:max_chars].rstrip())
+                part = part[max_chars:].lstrip()
+            current = part
+        if current:
+            chunks.append(current)
+        return chunks
+
+    async def send_text(
+            self,
+            account_id: int,
+            chat_id: int,
+            text: str,
+            notify: bool = True,
+    ) -> list[int]:
+        """Send text to a Max chat. This does not fetch dialogs or message history."""
+        if not text.strip():
+            raise RuntimeError("Message text is empty")
+
+        client = self._clients.get(account_id)
+        if not client:
+            raise RuntimeError(f"No Max client for account {account_id}")
+
+        if not await self._ensure_runtime_connection(account_id):
+            raise RuntimeError(f"Max client {account_id} is not connected")
+
+        client = self._clients.get(account_id)
+        if not client:
+            raise RuntimeError(f"No Max client for account {account_id}")
+
+        message_ids = []
+        for chunk in self._split_outgoing_text(text):
+            last_error = None
+            for attempt in range(3):
+                if attempt > 0:
+                    await asyncio.sleep(1.5)
+                    if not await self._ensure_runtime_connection(account_id, force_restart=True):
+                        last_error = RuntimeError(f"Max client {account_id} failed to reconnect")
+                        continue
+                    client = self._clients.get(account_id)
+                    if not client:
+                        last_error = RuntimeError(f"No Max client for account {account_id} after reconnect")
+                        continue
+
+                try:
+                    msg = await client.send_message(text=chunk, chat_id=int(chat_id), notify=notify)
+                    msg_id = getattr(msg, "id", None) if msg else None
+                    if msg_id is not None:
+                        message_ids.append(int(msg_id))
+                    break
+                except Exception as e:
+                    last_error = e
+                    if not self._is_transient_socket_error(e) or attempt == 2:
+                        raise RuntimeError(f"Max send failed: {e}") from e
+                    print(
+                        f"[MaxClient] Send failed for account {account_id}, "
+                        f"attempt {attempt + 1}/3: {e}. Reconnecting...",
+                        flush=True,
+                    )
+                    self._mark_disconnected(account_id)
+            else:
+                raise RuntimeError(f"Max send failed: {last_error}")
+            await asyncio.sleep(0.4)
+        return message_ids
+
     async def get_service_messages(self, account_id: int, limit: int = 20) -> list[dict]:
         """Get recent messages from Max private dialogs for code lookup."""
         client = self._clients.get(account_id)
@@ -503,6 +772,8 @@ class MaxClientManager:
                         await client.close()
                     elif hasattr(client, 'disconnect'):
                         await client.disconnect()
+                    if hasattr(client, '_cleanup_client'):
+                        await client._cleanup_client()
                 except Exception:
                     pass
 
@@ -511,6 +782,8 @@ class MaxClientManager:
 
             if account_id in self._phones:
                 del self._phones[account_id]
+            if account_id in self._auth_tokens:
+                del self._auth_tokens[account_id]
 
     async def close_all(self):
         """Close all Max client connections"""

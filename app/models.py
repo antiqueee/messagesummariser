@@ -147,6 +147,54 @@ class GenerateReportRequest(BaseModel):
         return parse_flexible_datetime(self.end_date)
 
 
+class GenerateWeeklyReportRequest(BaseModel):
+    complex_ids: list[int]
+    start_date: str
+    end_date: str
+
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_dates(cls, v):
+        value = str(v).strip()
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', value):
+            return value
+        parse_flexible_datetime(value)
+        return value
+
+    def get_start_date(self) -> datetime:
+        value = self.start_date
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', value):
+            value = value + "T00:00:00"
+        return parse_flexible_datetime(value)
+
+    def get_end_date(self) -> datetime:
+        value = self.end_date
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', value):
+            value = value + "T23:59:59"
+        return parse_flexible_datetime(value)
+
+
+class ComplexMaxTargetRequest(BaseModel):
+    max_account_id: Optional[int] = None
+    max_chat_id: Optional[int] = None
+    chat_title: Optional[str] = None
+
+
+class SaveReportRequest(BaseModel):
+    report_type: str = "daily"
+    complex_id: Optional[int] = None
+    complex_name: str
+    period_start: str
+    period_end: str
+    original_text: str
+    edited_text: str
+    archive_to_google_doc: bool = True
+
+
+class SendReportToMaxRequest(SaveReportRequest):
+    report_history_id: Optional[int] = None
+
+
 class AnalyzeNegativistsRequest(BaseModel):
     chat_ids: list[int]
     start_date: str
@@ -169,6 +217,7 @@ class AnalyzeNegativistsRequest(BaseModel):
 class MaxAccountCreateRequest(BaseModel):
     phone: str
     name: str
+    is_send_only: bool = False
 
 
 class MaxChatAddRequest(BaseModel):

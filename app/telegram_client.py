@@ -34,6 +34,7 @@ class TelegramClientManager:
         self._clients: dict[int, TelegramClient] = {}
         self._pending_auth: dict[int, dict] = {}  # account_id -> {client, phone_code_hash}
         self._locks: dict[int, asyncio.Lock] = {}  # Lock per account to prevent concurrent access
+        self._operation_locks: dict[int, asyncio.Lock] = {}
         self._proxy_initialized = False
 
     def _get_session_path(self, account_id: int) -> Path:
@@ -44,6 +45,33 @@ class TelegramClientManager:
         if account_id not in self._locks:
             self._locks[account_id] = asyncio.Lock()
         return self._locks[account_id]
+
+    def _get_operation_lock(self, account_id: int) -> asyncio.Lock:
+        """Serialize high-level Telegram requests per session/account."""
+        if account_id not in self._operation_locks:
+            self._operation_locks[account_id] = asyncio.Lock()
+        return self._operation_locks[account_id]
+
+    def _is_transient_fetch_error(self, error: Exception) -> bool:
+        """Detect Telethon/network failures that require a fresh connection."""
+        if isinstance(error, CONNECTION_ERRORS):
+            return True
+
+        text = str(error).lower()
+        error_name = type(error).__name__.lower()
+        markers = (
+            "cannot send requests while disconnected",
+            "closed",
+            "connection",
+            "disconnected",
+            "broken pipe",
+            "wrong session id",
+            "proxy closed",
+            "tcptransport",
+            "transport",
+            "timeout",
+        )
+        return any(marker in text for marker in markers) or any(marker in error_name for marker in markers)
 
     async def _ensure_proxy_initialized(self):
         """Initialize proxy manager and find best proxy on first use"""
@@ -84,6 +112,16 @@ class TelegramClientManager:
         except Exception:
             pass
 
+    async def _reset_client_after_fetch_failure(self, account_id: int, client: Optional[TelegramClient]):
+        """Drop a stale client and rotate proxy after message fetch failures."""
+        if self._clients.get(account_id) is client:
+            self._clients.pop(account_id, None)
+        await self._safe_disconnect(client)
+        await asyncio.sleep(0.3)
+        if self.use_proxy:
+            pm = get_proxy_manager()
+            await pm.get_next_proxy()
+
     async def get_client(self, account_id: int, max_retries: int = 3) -> Optional[TelegramClient]:
         """Get or create a client for the given account with automatic proxy failover"""
         # Quick check without lock
@@ -91,6 +129,8 @@ class TelegramClientManager:
             client = self._clients[account_id]
             if client.is_connected():
                 return client
+            self._clients.pop(account_id, None)
+            await self._safe_disconnect(client)
 
         # Use lock to prevent concurrent session access (SQLite locking issues)
         async with self._get_lock(account_id):
@@ -99,6 +139,8 @@ class TelegramClientManager:
                 client = self._clients[account_id]
                 if client.is_connected():
                     return client
+                self._clients.pop(account_id, None)
+                await self._safe_disconnect(client)
 
             session_path = self._get_session_path(account_id)
             if not session_path.with_suffix('.session').exists():
@@ -350,6 +392,27 @@ class TelegramClientManager:
             topic_ids: list[int] = None,
             timeout_seconds: int = 60
     ) -> list[dict]:
+        async with self._get_operation_lock(account_id):
+            return await self._get_messages_unlocked(
+                account_id=account_id,
+                chat_telegram_id=chat_telegram_id,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                topic_ids=topic_ids,
+                timeout_seconds=timeout_seconds,
+            )
+
+    async def _get_messages_unlocked(
+            self,
+            account_id: int,
+            chat_telegram_id: int,
+            start_date: datetime,
+            end_date: datetime,
+            limit: int = 10000,
+            topic_ids: list[int] = None,
+            timeout_seconds: int = 60
+    ) -> list[dict]:
         """Get messages from a chat within a date range, optionally filtered by topic IDs"""
         client = await self.get_client(account_id)
         if not client:
@@ -370,94 +433,144 @@ class TelegramClientManager:
             flush=True
         )
 
-        messages = []
+        max_fetch_attempts = 3 if self.use_proxy else 1
+        per_attempt_timeout = max(5, min(timeout_seconds, max(10, timeout_seconds // max_fetch_attempts)))
+        last_error = None
 
-        async def fetch_messages():
-            nonlocal messages
-            async for message in client.iter_messages(
-                    chat_telegram_id,
-                    offset_date=end_naive,
-                    reverse=False,
-                    limit=limit
-            ):
-                msg_date = message.date.replace(tzinfo=None)
+        for attempt in range(max_fetch_attempts):
+            if attempt > 0:
+                client = await self.get_client(account_id)
+                if not client:
+                    print(f"[get_messages] No client for account {account_id} after retry", flush=True)
+                    return []
 
-                if msg_date < start_naive:
-                    break
+            messages = []
 
-                if msg_date > end_naive:
-                    continue
+            async def fetch_messages():
+                nonlocal messages
+                async for message in client.iter_messages(
+                        chat_telegram_id,
+                        offset_date=end_naive,
+                        reverse=False,
+                        limit=limit
+                ):
+                    msg_date = message.date.replace(tzinfo=None)
 
-                # Skip non-text messages
-                if not message.text:
-                    continue
+                    if msg_date < start_naive:
+                        break
 
-                # Filter by topic if specified
-                if topic_filter is not None:
-                    # Get topic ID from message (reply_to contains topic info in forums)
-                    msg_topic_id = None
-                    if hasattr(message, 'reply_to') and message.reply_to:
-                        # In forums, reply_to_top_id is the topic ID
-                        msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
-                        if msg_topic_id is None:
-                            msg_topic_id = getattr(message.reply_to, 'reply_to_msg_id', None)
-
-                    # Messages in General topic have no reply_to, but topic ID is 1
-                    if msg_topic_id is None:
-                        msg_topic_id = 1  # General topic
-
-                    if msg_topic_id not in topic_filter:
+                    if msg_date > end_naive:
                         continue
 
-                sender_name = 'Unknown'
-                sender_id = 0
+                    # Skip non-text messages
+                    if not message.text:
+                        continue
 
-                if message.sender:
-                    sender_id = message.sender_id
-                    if isinstance(message.sender, User):
-                        sender_name = ' '.join(filter(None, [
-                            message.sender.first_name,
-                            message.sender.last_name
-                        ])) or message.sender.username or 'User'
-                    else:
-                        sender_name = getattr(message.sender, 'title', 'Unknown')
+                    # Filter by topic if specified
+                    if topic_filter is not None:
+                        # Get topic ID from message (reply_to contains topic info in forums)
+                        msg_topic_id = None
+                        if hasattr(message, 'reply_to') and message.reply_to:
+                            # In forums, reply_to_top_id is the topic ID
+                            msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+                            if msg_topic_id is None:
+                                msg_topic_id = getattr(message.reply_to, 'reply_to_msg_id', None)
 
-                # Get topic ID for reference
-                msg_topic_id = None
-                if hasattr(message, 'reply_to') and message.reply_to:
-                    msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+                        # Messages in General topic have no reply_to, but topic ID is 1
+                        if msg_topic_id is None:
+                            msg_topic_id = 1  # General topic
 
-                messages.append({
-                    'message_id': message.id,
-                    'sender_id': sender_id,
-                    'sender_name': sender_name,
-                    'text': message.text,
-                    'date': msg_date.isoformat() + 'Z',
-                    'reply_to': message.reply_to_msg_id,
-                    'topic_id': msg_topic_id
-                })
+                        if msg_topic_id not in topic_filter:
+                            continue
 
-        try:
-            await asyncio.wait_for(fetch_messages(), timeout=timeout_seconds)
-            print(f"[get_messages] Found {len(messages)} messages", flush=True)
+                    sender_name = 'Unknown'
+                    sender_id = message.sender_id or 0
+                    sender_username = None
 
-        except asyncio.TimeoutError:
-            print(f"[get_messages] Timeout after {timeout_seconds}s, got {len(messages)} messages so far", flush=True)
+                    if message.sender:
+                        if isinstance(message.sender, User):
+                            sender_username = message.sender.username
+                            sender_name = ' '.join(filter(None, [
+                                message.sender.first_name,
+                                message.sender.last_name
+                            ])) or message.sender.username or 'User'
+                        else:
+                            sender_name = getattr(message.sender, 'title', 'Unknown')
 
-        except Exception as e:
-            print(
-                f"[get_messages] Error fetching messages: {e}\n"
-                f"[get_messages] Context: account_id={account_id}, "
-                f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
-                f"start={start_naive!r}, end={end_naive!r}, "
-                f"topic_ids={topic_ids!r}, fetched_so_far={len(messages)}",
-                flush=True
-            )
-            traceback.print_exc()
-            return []
+                    # Get topic ID for reference
+                    msg_topic_id = None
+                    if hasattr(message, 'reply_to') and message.reply_to:
+                        msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
 
-        # Return in chronological order
-        return list(reversed(messages))
+                    messages.append({
+                        'message_id': message.id,
+                        'sender_id': sender_id,
+                        'sender_name': sender_name,
+                        'sender_username': sender_username,
+                        'text': message.text,
+                        'date': msg_date.isoformat() + 'Z',
+                        'reply_to': message.reply_to_msg_id,
+                        'topic_id': msg_topic_id
+                    })
+
+            try:
+                await asyncio.wait_for(fetch_messages(), timeout=per_attempt_timeout)
+                print(f"[get_messages] Found {len(messages)} messages", flush=True)
+                return list(reversed(messages))
+
+            except asyncio.TimeoutError as e:
+                last_error = e
+                print(
+                    f"[get_messages] Timeout after {per_attempt_timeout}s "
+                    f"(attempt {attempt + 1}/{max_fetch_attempts}), got {len(messages)} messages so far",
+                    flush=True
+                )
+                if messages:
+                    return list(reversed(messages))
+                if attempt < max_fetch_attempts - 1:
+                    await self._reset_client_after_fetch_failure(account_id, client)
+                    continue
+
+            except CONNECTION_ERRORS as e:
+                last_error = e
+                print(
+                    f"[get_messages] Connection error (attempt {attempt + 1}/{max_fetch_attempts}): {e}",
+                    flush=True
+                )
+                if messages:
+                    return list(reversed(messages))
+                if attempt < max_fetch_attempts - 1:
+                    await self._reset_client_after_fetch_failure(account_id, client)
+                    continue
+
+            except Exception as e:
+                if self._is_transient_fetch_error(e):
+                    last_error = e
+                    print(
+                        f"[get_messages] Transient Telegram error "
+                        f"(attempt {attempt + 1}/{max_fetch_attempts}): {e}",
+                        flush=True
+                    )
+                    if messages:
+                        return list(reversed(messages))
+                    if attempt < max_fetch_attempts - 1:
+                        await self._reset_client_after_fetch_failure(account_id, client)
+                        continue
+
+                print(
+                    f"[get_messages] Error fetching messages: {e}\n"
+                    f"[get_messages] Context: account_id={account_id}, "
+                    f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
+                    f"start={start_naive!r}, end={end_naive!r}, "
+                    f"topic_ids={topic_ids!r}, fetched_so_far={len(messages)}",
+                    flush=True
+                )
+                traceback.print_exc()
+                return []
+
+        if last_error:
+            print(f"[get_messages] Giving up after {max_fetch_attempts} attempts: {last_error}", flush=True)
+        return []
 
     async def close_all(self):
         """Close all client connections"""

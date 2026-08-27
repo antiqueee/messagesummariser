@@ -18,6 +18,7 @@ E: Доп. информация | F: Риски/реакция | G: Основн
 """
 import asyncio
 import os
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -159,3 +160,61 @@ async def export_to_sheet(
         return await loop.run_in_executor(None, _sync_export)
     except Exception as e:
         return {'success': False, 'message': str(e), 'rows_written': 0}
+
+
+def _parse_sheet_date(value: str) -> datetime | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+async def read_weekly_rows(
+    sheet_id: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[dict]:
+    """
+    Read rows from the linked daily-summary sheet for an inclusive date range.
+
+    Expected layout:
+        A: Дата  B: No  C: Тревожные темы  D: Чат, где обсуждают
+        E: Доп. информация  F: Риски/реакция  G: Основные (фоновые) темы
+    """
+
+    start_day = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_day = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    def _sync_read():
+        gc = _get_client()
+        spreadsheet = gc.open_by_key(sheet_id)
+        ws = spreadsheet.sheet1
+        values = ws.get_all_values()
+        rows = []
+
+        for row_index, row in enumerate(values[1:], start=2):
+            padded = row + [""] * (7 - len(row))
+            row_date = _parse_sheet_date(padded[0])
+            if not row_date or row_date < start_day or row_date > end_day:
+                continue
+
+            rows.append({
+                "row_index": row_index,
+                "date": padded[0].strip(),
+                "no": padded[1].strip(),
+                "alarming_topics": padded[2].strip(),
+                "chat": padded[3].strip(),
+                "additional_info": padded[4].strip(),
+                "risks_reaction": padded[5].strip(),
+                "background_topics": padded[6].strip(),
+            })
+
+        return rows
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_read)

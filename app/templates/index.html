@@ -5,85 +5,205 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI-агент охранки</title>
     <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --brand: #8E1F3B;
+            --brand-dark: #75142C;
+            --page: #F4F1ED;
+            --card: #fff;
+            --field: #FDFCFB;
+            --border: #E7DFD8;
+            --border-soft: #F0EAE3;
+            --border-row: #F5F0EA;
+            --text: #221C18;
+            --text-soft: #5C534D;
+            --muted: #8A7E74;
+            --disabled: #B0A69C;
+            --brand-tint: #F8EDF0;
+            --danger: #B33A22;
+            --danger-bg: #FBEAE4;
+            --warn: #9A6A00;
+            --warn-bg: #FBF3DC;
+            --ok: #1F7A4C;
+            --ok-bg: #E8F5EC;
+            --tg: #1B6FAE;
+            --tg-bg: #E3F0FA;
+            --max: #4F3FB5;
+            --max-bg: #EAE7FB;
+            --vk: #4A76A8;
+            --vk-bg: #E8F0FA;
+            --shadow-pop: 0 12px 32px rgba(34, 28, 24, .16);
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
         }
 
+        html, body {
+            min-height: 100%;
+            background: var(--page);
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #f5f5f5;
             min-height: 100vh;
+            color: var(--text);
+            font-family: 'Golos Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 13.5px;
+            line-height: 1.45;
+        }
+
+        button, input, select, textarea {
+            font-family: inherit;
+        }
+
+        button {
+            letter-spacing: 0;
+        }
+
+        input, select, textarea {
+            color: var(--text);
+            background: var(--field);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            font-size: 13px;
+            transition: border-color .15s, box-shadow .15s, background .15s;
+        }
+
+        input, select {
+            padding: 8px 12px;
+            min-height: 36px;
+        }
+
+        textarea {
+            padding: 12px 14px;
+            line-height: 1.6;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: 2px solid rgba(142, 31, 59, .22);
+            outline-offset: 1px;
+            border-color: #C9BDB2 !important;
+        }
+
+        input[type="checkbox"] {
+            min-height: 0;
+            accent-color: var(--brand);
         }
 
         .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
+            max-width: none;
+            margin: 0;
+            padding: 0 0 60px;
         }
 
         header {
-            background: #800020;
-            color: white;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 14px max(28px, calc((100vw - 1280px) / 2 + 28px));
+            margin: 0;
+            color: #fff;
+            background: linear-gradient(135deg, var(--brand-dark) 0%, var(--brand) 100%);
+            border-radius: 0;
         }
 
         header h1 {
-            font-size: 24px;
-            margin-bottom: 5px;
+            margin: 0 0 1px;
+            font-size: 17px;
+            line-height: 1.2;
+            font-weight: 700;
+            letter-spacing: 0;
         }
 
         header p {
-            opacity: 0.9;
-            font-size: 14px;
+            margin: 0;
+            color: rgba(255, 255, 255, .76);
+            font-size: 12px;
+            line-height: 1.35;
         }
 
         header .author {
-            font-style: italic;
-            opacity: 0.8;
-            font-size: 13px;
+            color: rgba(255, 255, 255, .8);
+            font-size: 12.5px;
+            font-style: normal;
+            white-space: nowrap;
+        }
+
+        #proxy-current {
+            min-width: 210px !important;
+            border-radius: 8px !important;
+            background: rgba(0, 0, 0, .25) !important;
+            font-family: 'JetBrains Mono', monospace !important;
+            font-size: 12px !important;
+        }
+
+        #proxy-dropdown {
+            border: 1px solid var(--border) !important;
+            border-radius: 12px !important;
+            box-shadow: var(--shadow-pop) !important;
         }
 
         .tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
             flex-wrap: wrap;
+            gap: 4px;
+            margin: 0;
+            padding: 0 max(28px, calc((100vw - 1280px) / 2 + 28px));
+            background: #fff;
+            border-bottom: 1px solid var(--border);
         }
 
         .tab-btn {
-            padding: 12px 24px;
-            border: none;
-            background: white;
-            border-radius: 8px;
+            position: relative;
+            min-height: 45px;
+            padding: 0 15px;
+            border: 0;
+            border-radius: 0;
+            color: var(--text-soft);
+            background: transparent;
+            box-shadow: none;
             cursor: pointer;
             font-size: 14px;
-            transition: all 0.2s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-weight: 500;
+            transition: color .15s;
         }
 
         .tab-btn:hover {
-            background: #f5e6ea;
+            color: var(--brand-dark);
+            background: transparent;
         }
 
         .tab-btn.active {
-            background: #800020;
-            color: white;
+            color: var(--brand-dark);
+            background: transparent;
+            font-weight: 700;
+        }
+
+        .tab-btn.active::after {
+            content: "";
+            position: absolute;
+            right: 12px;
+            bottom: -1px;
+            left: 12px;
+            height: 2.5px;
+            border-radius: 3px 3px 0 0;
+            background: var(--brand);
         }
 
         .panel {
             display: none;
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            max-width: 1280px;
+            margin: 26px auto 0;
+            padding: 0 28px;
+            background: transparent;
+            border-radius: 0;
+            box-shadow: none;
         }
 
         .panel.active {
@@ -91,200 +211,87 @@
         }
 
         .section {
-            margin-bottom: 30px;
+            margin-bottom: 18px;
+            padding: 20px 22px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
         }
 
         .section-title {
-            font-size: 18px;
-            margin-bottom: 15px;
-            color: #333;
             display: flex;
             align-items: center;
             gap: 10px;
+            margin: 0 0 14px;
+            color: var(--text);
+            font-size: 15px;
+            line-height: 1.3;
+            font-weight: 700;
+        }
+
+        .section-title .btn {
+            margin-left: auto;
         }
 
         .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-height: 36px;
+            padding: 8px 14px;
+            border: 1px solid transparent;
+            border-radius: 9px;
             cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
+            font-size: 12.5px;
+            font-weight: 600;
+            line-height: 1.2;
+            white-space: nowrap;
+            transition: background .15s, border-color .15s, color .15s, opacity .15s;
         }
 
-        .btn-primary {
-            background: #800020;
-            color: white;
+        .btn-primary, .btn-success {
+            color: #fff;
+            background: var(--brand);
         }
 
-        .btn-primary:hover {
-            background: #5c0017;
-        }
-
-        .btn-success {
-            background: #a3293d;
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #800020;
-        }
-
-        .btn-danger {
-            background: #f44336;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #d32f2f;
+        .btn-primary:hover, .btn-success:hover {
+            background: var(--brand-dark);
         }
 
         .btn-secondary {
-            background: #9e9e9e;
-            color: white;
+            color: var(--text-soft);
+            background: #fff;
+            border-color: var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: #C9BDB2;
+            background: #fff;
+        }
+
+        .btn-danger {
+            color: var(--danger);
+            background: transparent;
+            border-color: transparent;
+        }
+
+        .btn-danger:hover {
+            color: #C2402A;
+            background: #FBEFEA;
         }
 
         .btn-small {
-            padding: 8px 16px;
-            font-size: 13px;
+            min-height: 32px;
+            padding: 7px 12px;
+            font-size: 12.5px;
         }
 
         .input-group {
             display: flex;
+            flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-
-        input, select {
-            padding: 10px 15px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 14px;
-        }
-
-        input:focus, select:focus {
-            outline: none;
-            border-color: #800020;
-        }
-
-        .card {
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            background: #fafafa;
-        }
-
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .card-title {
-            font-weight: 600;
-            color: #333;
-        }
-
-        .card-subtitle {
-            font-size: 12px;
-            color: #666;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .badge-success {
-            background: #fdf2f4;
-            color: #800020;
-        }
-
-        .badge-warning {
-            background: #fff3e0;
-            color: #ef6c00;
-        }
-
-        .badge-info {
-            background: #f5e6ea;
-            color: #800020;
-        }
-
-        .chat-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .chat-item {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding: 12px;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            background: white;
-        }
-
-        .chat-item.monitored {
-            border-color: #a3293d;
-            background: #fdf2f4;
-        }
-
-        .chat-checkbox {
-            width: 20px;
-            height: 20px;
-        }
-
-        .chat-info {
-            flex: 1;
-        }
-
-        .chat-title {
-            font-weight: 500;
-        }
-
-        .chat-meta {
-            font-size: 12px;
-            color: #666;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .modal.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-title {
-            font-size: 20px;
-            margin-bottom: 20px;
         }
 
         .form-group {
@@ -294,64 +301,391 @@
         .form-group label {
             display: block;
             margin-bottom: 5px;
-            font-weight: 500;
-            color: #333;
+            color: var(--text-soft);
+            font-size: 12.5px;
+            font-weight: 600;
         }
 
-        .form-group input, .form-group select {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%;
         }
 
+        .card {
+            margin-bottom: 10px;
+            padding: 14px 16px;
+            background: #fff;
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .card-title {
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 700;
+        }
+
+        .card-subtitle {
+            margin-top: 2px;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 11.5px;
+            font-weight: 600;
+            line-height: 1.25;
+            white-space: nowrap;
+        }
+
+        .badge-success {
+            color: var(--ok);
+            background: var(--ok-bg);
+        }
+
+        .badge-warning {
+            color: var(--warn);
+            background: var(--warn-bg);
+        }
+
+        .badge-info {
+            color: var(--brand);
+            background: var(--brand-tint);
+        }
+
+        .badge-danger {
+            color: var(--danger);
+            background: var(--danger-bg);
+        }
+
+        .chat-list {
+            max-height: 560px;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+        }
+
+        .chat-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin: 0;
+            padding: 12px 20px;
+            background: #fff;
+            border: 0;
+            border-bottom: 1px solid var(--border-row);
+            border-radius: 0;
+        }
+
+        .chat-item:last-child {
+            border-bottom: 0;
+        }
+
+        .chat-item.monitored {
+            background: #fff;
+            border-color: var(--border-row);
+        }
+
+        .chat-group {
+            border-bottom: 1px solid var(--border-soft);
+        }
+
+        .chat-group:last-child {
+            border-bottom: 0;
+        }
+
+        .chat-group-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 14px;
+            color: var(--text-soft);
+            background: #FAF7F4;
+            border-bottom: 1px solid var(--border-soft);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .chat-group-header .chat-group-count {
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        .chat-group .chat-item {
+            padding-left: 16px;
+            padding-right: 16px;
+        }
+
+        .chat-group .chat-item:last-child {
+            border-bottom: 0;
+        }
+
+        .chat-checkbox {
+            width: 16px;
+            height: 16px;
+        }
+
+        .chat-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .chat-meta {
+            margin-top: 2px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(34, 28, 24, .42);
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            width: min(92vw, 560px);
+            max-height: min(88vh, 760px);
+            overflow-y: auto;
+            padding: 24px 28px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: var(--shadow-pop);
+        }
+
+        .modal-title {
+            margin: 0 0 20px;
+            color: var(--text);
+            font-size: 22px;
+            line-height: 1.2;
+            font-weight: 700;
+        }
+
         .report-section {
-            margin-bottom: 30px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
+            margin-bottom: 18px;
             overflow: hidden;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 14px;
         }
 
         .report-header {
-            background: #800020;
-            color: white;
-            padding: 15px;
-            font-size: 18px;
+            padding: 14px 18px;
+            color: var(--text);
+            background: #fff;
+            border-bottom: 1px solid var(--border-soft);
+            font-size: 14.5px;
+            font-weight: 700;
         }
 
         .report-chat {
-            padding: 20px;
-            border-bottom: 1px solid #e0e0e0;
+            padding: 18px;
+            border-bottom: 1px solid var(--border-row);
         }
 
         .report-chat:last-child {
-            border-bottom: none;
+            border-bottom: 0;
         }
 
         .report-chat-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 10px;
-            color: #333;
+            margin-bottom: 8px;
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 700;
         }
 
         .report-content {
+            width: 100%;
+            color: #3C332C;
             white-space: pre-wrap;
-            line-height: 1.6;
-            color: #444;
+            line-height: 1.65;
+        }
+
+        textarea.report-content {
+            min-height: 260px;
+            overflow: hidden;
+            background: var(--field) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 10px !important;
+            padding: 12px 14px !important;
+            resize: none;
+        }
+
+        .report-progress-card {
+            text-align: left;
+        }
+
+        .report-progress-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+
+        .report-progress-title {
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .report-progress-detail {
+            margin-top: 4px;
+            color: var(--text-soft);
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        .report-progress-percent {
+            min-width: 54px;
+            color: var(--brand);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            text-align: right;
+        }
+
+        .report-progress-track {
+            position: relative;
+            overflow: hidden;
+            height: 10px;
+            background: var(--border-soft);
+            border-radius: 999px;
+        }
+
+        .report-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, var(--brand-dark), var(--brand));
+            border-radius: inherit;
+            transition: width .35s ease;
+        }
+
+        .report-progress-fill.running::after {
+            content: "";
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+            animation: progress-shine 1.2s linear infinite;
+        }
+
+        .report-progress-meta {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .report-progress-pill {
+            min-width: 0;
+            padding: 8px 10px;
+            color: var(--text-soft);
+            background: var(--field);
+            border: 1px solid var(--border-soft);
+            border-radius: 9px;
+            font-size: 12.5px;
+        }
+
+        .report-progress-pill strong {
+            display: block;
+            overflow: hidden;
+            margin-top: 2px;
+            color: var(--text);
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .report-progress-log {
+            margin-top: 14px;
+            display: grid;
+            gap: 6px;
+        }
+
+        .report-progress-log-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 12.5px;
+        }
+
+        .report-progress-dot {
+            width: 7px;
+            height: 7px;
+            flex: none;
+            background: var(--brand);
+            border-radius: 50%;
+            animation: progress-dot 1s ease-in-out infinite;
+        }
+
+        @keyframes progress-shine {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+        }
+
+        @keyframes progress-dot {
+            0%, 100% { opacity: .45; transform: scale(.86); }
+            50% { opacity: 1; transform: scale(1); }
+        }
+
+        @media (max-width: 760px) {
+            .report-progress-meta {
+                grid-template-columns: 1fr;
+            }
         }
 
         .loading {
+            margin-bottom: 18px;
+            padding: 30px;
             text-align: center;
-            padding: 40px;
-            color: #666;
+            color: var(--muted);
+            background: #fff;
+            border: 1px dashed var(--border);
+            border-radius: 14px;
         }
 
         .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #800020;
+            width: 34px;
+            height: 34px;
+            margin: 0 auto 14px;
+            border: 3px solid var(--border-soft);
+            border-top: 3px solid var(--brand);
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 15px;
         }
 
         @keyframes spin {
@@ -359,45 +693,52 @@
             100% { transform: rotate(360deg); }
         }
 
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .35; }
+        }
+
         .empty-state {
+            padding: 52px 28px;
+            color: var(--muted);
             text-align: center;
-            padding: 40px;
-            color: #999;
+            font-size: 13.5px;
         }
 
         .alert {
-            padding: 15px;
-            border-radius: 6px;
             margin-bottom: 15px;
+            padding: 13px 15px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.45;
         }
 
         .alert-error {
-            background: #ffebee;
-            color: #c62828;
-            border: 1px solid #ef9a9a;
+            color: var(--danger);
+            background: var(--danger-bg);
+            border: 1px solid #F0B7AA;
         }
 
         .alert-success {
-            background: #fdf2f4;
-            color: #5c0017;
-            border: 1px solid #d4a0ab;
+            color: var(--brand-dark);
+            background: var(--brand-tint);
+            border: 1px solid #E8C9D2;
         }
 
         .date-inputs {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(180px, 1fr));
+            gap: 12px;
         }
 
         .date-inputs .form-group {
-            flex: 1;
-            min-width: 200px;
+            min-width: 0;
         }
 
         .message-item {
-            padding: 8px 12px;
-            border-bottom: 1px solid #f0f0f0;
-            font-size: 14px;
+            padding: 9px 12px;
+            border-bottom: 1px solid var(--border-row);
+            font-size: 13px;
             line-height: 1.5;
         }
 
@@ -406,50 +747,44 @@
         }
 
         .message-time {
-            color: #999;
-            font-size: 12px;
             margin-right: 8px;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
         }
 
         .message-sender {
-            font-weight: 600;
-            color: #800020;
             margin-right: 6px;
+            color: var(--brand);
+            font-weight: 700;
         }
 
         .message-text {
-            color: #333;
+            color: var(--text);
         }
 
         .messages-container {
             max-height: 600px;
             overflow-y: auto;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            background: #fafafa;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 10px;
         }
 
-        .copy-btn {
-            background: #ff9800;
-            color: white;
-            margin-left: 10px;
+        .copy-btn, .sheets-btn {
+            color: var(--text-soft);
+            background: #fff;
+            border: 1px solid var(--border);
         }
 
-        .copy-btn:hover {
-            background: #f57c00;
-        }
-
-        .sheets-btn {
-            background: #1a7340;
-            color: white;
-        }
-
-        .sheets-btn:hover {
-            background: #145a32;
+        .copy-btn:hover, .sheets-btn:hover {
+            border-color: #C9BDB2;
+            background: #fff;
         }
 
         .sheets-btn:disabled {
-            background: #888;
+            color: var(--disabled);
+            background: #F4F1ED;
             cursor: not-allowed;
         }
 
@@ -462,32 +797,353 @@
             display: flex;
             align-items: flex-start;
             gap: 8px;
-            padding: 6px 10px;
-            border-radius: 5px;
             margin-bottom: 5px;
+            padding: 7px 10px;
+            border-radius: 7px;
         }
 
         .sheets-result-item.ok {
-            background: #e8f5e9;
-            color: #1b5e20;
+            color: var(--ok);
+            background: var(--ok-bg);
         }
 
         .sheets-result-item.err {
-            background: #ffebee;
-            color: #b71c1c;
+            color: var(--danger);
+            background: var(--danger-bg);
         }
 
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
+        #report-complexes, #weekly-complexes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
 
-            .tabs {
+        #report-complexes label, #weekly-complexes label {
+            display: inline-flex !important;
+            align-items: center;
+            gap: 8px;
+            margin: 0 !important;
+            padding: 7px 11px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            color: var(--text-soft);
+            font-size: 12.5px !important;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        #negativists-chats {
+            border-color: var(--border) !important;
+            border-radius: 10px !important;
+            background: #fff;
+        }
+
+        #reports-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
+            display: grid;
+            grid-template-columns: 440px minmax(0, 1fr);
+            gap: 20px;
+            align-items: start;
+        }
+
+        #reports-panel > .section, #weekly-panel > .section, #negativists-panel > .section {
+            margin-bottom: 0;
+        }
+
+        #report-loading, #weekly-loading, #negativists-loading,
+        #report-result, #weekly-result, #negativists-result {
+            grid-column: 2;
+            min-width: 0;
+        }
+
+        #report-result:empty::before, #weekly-result:empty::before, #negativists-result:empty::before {
+            content: "Результат появится здесь после запуска анализа";
+            display: block;
+            padding: 80px 36px;
+            color: var(--muted);
+            text-align: center;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            font-size: 13.5px;
+        }
+
+        #report-loading[style*="block"] + #report-result:empty::before,
+        #weekly-loading[style*="block"] + #weekly-result:empty::before,
+        #negativists-loading[style*="block"] + #negativists-result:empty::before {
+            display: none;
+        }
+
+        .platform-badge {
+            min-width: 34px;
+            text-transform: uppercase;
+            font-size: 10.5px;
+            font-weight: 700;
+        }
+
+        .platform-badge.tg {
+            color: var(--tg);
+            background: var(--tg-bg);
+        }
+
+        .platform-badge.max {
+            color: var(--max);
+            background: var(--max-bg);
+        }
+
+        .platform-badge.vk {
+            color: var(--vk);
+            background: var(--vk-bg);
+        }
+
+        .account-row {
+            display: grid;
+            grid-template-columns: 34px minmax(180px, 250px) minmax(130px, 170px) minmax(90px, 1fr) auto;
+            align-items: center;
+            gap: 14px;
+            padding: 11px 20px;
+            border-bottom: 1px solid var(--border-row);
+        }
+
+        .account-row:last-child {
+            border-bottom: 0;
+        }
+
+        .account-avatar {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: none;
+            border-radius: 50%;
+            color: var(--brand);
+            background: var(--brand-tint);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .account-name {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 600;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .account-contact {
+            overflow: hidden;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .account-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            flex-wrap: wrap;
+        }
+
+        .account-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .status-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-soft);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .status-label::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            flex: none;
+            border-radius: 50%;
+            background: var(--disabled);
+        }
+
+        .status-label.ok::before {
+            background: #2E9E63;
+        }
+
+        .status-label.warn::before {
+            background: var(--warn);
+        }
+
+        .complex-row {
+            display: grid;
+            grid-template-columns: minmax(170px, 220px) minmax(260px, 1fr);
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-row);
+        }
+
+        .complex-row:last-child {
+            border-bottom: 0;
+        }
+
+        .complex-name {
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 700;
+        }
+
+        .complex-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .complex-control-line {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex-wrap: wrap;
+        }
+
+        .complex-control-line input,
+        .complex-control-line select {
+            flex: 1 1 180px;
+            min-width: 160px;
+        }
+
+        .negative-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .negative-card {
+            padding: 15px 18px;
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        .negative-card-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .negative-index {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: none;
+            border-radius: 50%;
+            color: var(--brand);
+            background: var(--brand-tint);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .negative-name {
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 700;
+        }
+
+        .negative-username {
+            margin-top: 2px;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .negative-status {
+            padding-left: 12px;
+            border-left: 3px solid var(--border-soft);
+            color: #3C332C;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .negative-card.high .negative-status {
+            border-left-color: var(--danger);
+        }
+
+        .negative-card.medium .negative-status {
+            border-left-color: var(--warn);
+        }
+
+        .tag-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .tag-pill {
+            padding: 3px 9px;
+            border-radius: 6px;
+            color: var(--text-soft);
+            background: var(--page);
+            font-size: 11.5px;
+            font-weight: 600;
+        }
+
+        .card > div[style*="grid-template-columns: 250px 150px"] {
+            grid-template-columns: minmax(180px, 250px) minmax(120px, 150px) minmax(20px, 1fr) auto !important;
+        }
+
+        @media (max-width: 900px) {
+            header {
+                align-items: flex-start;
                 flex-direction: column;
             }
 
+            .tabs {
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+
             .tab-btn {
-                text-align: center;
+                flex: none;
+            }
+
+            .panel {
+                padding: 0 14px;
+            }
+
+            #reports-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
+                display: block;
+            }
+
+            #report-loading, #weekly-loading, #negativists-loading,
+            #report-result, #weekly-result, #negativists-result {
+                margin-top: 16px;
+            }
+
+            .account-row, .complex-row {
+                grid-template-columns: 1fr;
+            }
+
+            .account-actions {
+                justify-content: flex-start;
+            }
+
+            .date-inputs {
+                grid-template-columns: 1fr;
             }
         }
     </style>
@@ -539,15 +1195,16 @@
         </header>
 
         <div class="tabs">
-            <button class="tab-btn active" data-tab="accounts">Аккаунты</button>
-            <button class="tab-btn" data-tab="complexes">ЖК (Объекты)</button>
+            <button class="tab-btn active" data-tab="reports">Сводка</button>
+            <button class="tab-btn" data-tab="weekly">Недельные сводки</button>
             <button class="tab-btn" data-tab="chats">Чаты</button>
-            <button class="tab-btn" data-tab="reports">Сводка</button>
+            <button class="tab-btn" data-tab="accounts">Аккаунты</button>
+            <button class="tab-btn" data-tab="complexes">ЖК (Объекты)</button>
             <button class="tab-btn" data-tab="negativists">Негативщики</button>
         </div>
 
         <!-- Accounts Panel -->
-        <div id="accounts-panel" class="panel active">
+        <div id="accounts-panel" class="panel">
             <div class="section">
                 <h2 class="section-title">
                     Telegram аккаунты
@@ -602,7 +1259,7 @@
         </div>
 
         <!-- Reports Panel -->
-        <div id="reports-panel" class="panel">
+        <div id="reports-panel" class="panel active">
             <div class="section">
                 <h2 class="section-title">Генерация сводки</h2>
 
@@ -623,8 +1280,16 @@
                 </div>
 
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                    <button class="btn btn-success" onclick="generateReport()">Сформировать сводку</button>
+                    <button class="btn btn-success" id="generate-report-btn" onclick="generateReport()">Сформировать сводку</button>
                     <button class="btn btn-secondary" onclick="toggleRules()" id="rules-toggle-btn">Показать регламент</button>
+                </div>
+
+                <div style="margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <input type="text" id="report-archive-doc-url"
+                        placeholder="Ссылка на Google Doc для базы сводок..."
+                        style="flex: 1; min-width: 260px;">
+                    <button class="btn btn-secondary btn-small" onclick="saveReportArchiveDoc()">Сохранить Google Doc</button>
+                    <span id="report-archive-doc-status" style="font-size: 13px; color: #666;"></span>
                 </div>
 
                 <div id="rules-panel" style="display: none; margin-top: 15px;">
@@ -632,16 +1297,73 @@
                         <button class="btn btn-primary btn-small" onclick="saveRules()" id="save-rules-btn">Сохранить регламент</button>
                         <button class="btn btn-secondary btn-small" onclick="resetRules()">Сбросить к исходному</button>
                     </div>
-                    <textarea id="rules-textarea" style="width: 100%; height: 400px; padding: 15px; border: 1px solid #d4a0ab; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #333; background: #fdf2f4; resize: vertical; font-family: inherit;"></textarea>
+                    <textarea id="rules-textarea" style="width: 100%; height: 400px; resize: vertical;"></textarea>
                 </div>
             </div>
 
-            <div id="report-loading" class="loading" style="display: none;">
-                <div class="spinner"></div>
-                <p>Генерация сводки... Это может занять несколько минут.</p>
+            <div id="report-loading" class="loading report-progress-card" style="display: none;">
+                <div class="report-progress-top">
+                    <div>
+                        <div class="report-progress-title" id="report-progress-title">Генерация сводки</div>
+                        <div class="report-progress-detail" id="report-progress-detail">Подготавливаю задачу...</div>
+                    </div>
+                    <div class="report-progress-percent" id="report-progress-percent">0%</div>
+                </div>
+                <div class="report-progress-track">
+                    <div class="report-progress-fill running" id="report-progress-fill"></div>
+                </div>
+                <div class="report-progress-meta">
+                    <div class="report-progress-pill">ЖК<strong id="report-progress-complex">-</strong></div>
+                    <div class="report-progress-pill">Чат<strong id="report-progress-chat">-</strong></div>
+                    <div class="report-progress-pill">Источник<strong id="report-progress-source">-</strong></div>
+                </div>
+                <div class="report-progress-log" id="report-progress-log"></div>
             </div>
 
             <div id="report-result"></div>
+        </div>
+
+        <!-- Weekly Reports Panel -->
+        <div id="weekly-panel" class="panel">
+            <div class="section">
+                <h2 class="section-title">Недельные сводки</h2>
+
+                <div class="form-group">
+                    <label>Выберите ЖК:</label>
+                    <div id="weekly-complexes"></div>
+                </div>
+
+                <div class="date-inputs">
+                    <div class="form-group">
+                        <label>Начало недели:</label>
+                        <input type="date" id="weekly-start-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Конец недели:</label>
+                        <input type="date" id="weekly-end-date">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button class="btn btn-success" id="generate-weekly-report-btn" onclick="generateWeeklyReport()">Сформировать недельную сводку</button>
+                    <button class="btn btn-secondary" onclick="toggleWeeklyRules()" id="weekly-rules-toggle-btn">Показать регламент</button>
+                </div>
+
+                <div id="weekly-rules-panel" style="display: none; margin-top: 15px;">
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary btn-small" onclick="saveWeeklyRules()">Сохранить регламент</button>
+                        <button class="btn btn-secondary btn-small" onclick="resetWeeklyRules()">Сбросить к исходному</button>
+                    </div>
+                    <textarea id="weekly-rules-textarea" style="width: 100%; height: 420px; resize: vertical;"></textarea>
+                </div>
+            </div>
+
+            <div id="weekly-loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Генерация недельных сводок...</p>
+            </div>
+
+            <div id="weekly-result"></div>
         </div>
 
         <!-- Negativists Panel -->
@@ -679,7 +1401,7 @@
                         <button class="btn btn-primary btn-small" onclick="saveNegRules()">Сохранить инструкции</button>
                         <button class="btn btn-secondary btn-small" onclick="resetNegRules()">Сбросить к исходному</button>
                     </div>
-                    <textarea id="neg-rules-textarea" style="width: 100%; height: 300px; padding: 15px; border: 1px solid #d4a0ab; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #333; background: #fdf2f4; resize: vertical; font-family: inherit;"></textarea>
+                    <textarea id="neg-rules-textarea" style="width: 100%; height: 300px; resize: vertical;"></textarea>
                 </div>
             </div>
 
@@ -772,9 +1494,31 @@
                 <label>Номер телефона:</label>
                 <input type="tel" id="max-account-phone" placeholder="+7XXXXXXXXXX">
             </div>
+            <div class="form-group">
+                <label style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; line-height: 1.35;">
+                    <input type="checkbox" id="max-account-send-only" checked style="width: 18px; height: 18px; margin-top: 3px; flex: 0 0 auto;">
+                    <span style="display: block; flex: 1; min-width: 0; white-space: normal;">Только отправка сводок</span>
+                </label>
+            </div>
             <div class="input-group">
                 <button class="btn btn-primary" onclick="createMaxAccount()">Добавить</button>
                 <button class="btn btn-secondary" onclick="closeModal('add-max-account-modal')">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="max-auth-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Код Max</h3>
+            <p id="max-auth-message" style="margin-bottom: 15px; color: #666;"></p>
+            <div class="form-group">
+                <label>Код из SMS или приложения Max:</label>
+                <input type="text" id="max-auth-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+            </div>
+            <div class="input-group">
+                <button class="btn btn-primary" id="max-auth-submit-btn" onclick="verifyMaxAuthCode()">Подтвердить</button>
+                <button class="btn btn-secondary" id="max-auth-resend-btn" onclick="resendMaxAuthCode()">Отправить код еще раз</button>
+                <button class="btn btn-secondary" onclick="closeModal('max-auth-modal')">Отмена</button>
             </div>
         </div>
     </div>
@@ -901,6 +1645,7 @@
 
     <script>
         let currentAuthAccountId = null;
+        let currentMaxAuthAccountId = null;
 
         // Tab switching
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -918,7 +1663,8 @@
                     loadComplexesForFilter();
                     loadChats();
                 }
-                if (btn.dataset.tab === 'reports') loadReportComplexes();
+                if (btn.dataset.tab === 'reports') { loadReportComplexes(); loadReportArchiveDoc(); }
+                if (btn.dataset.tab === 'weekly') loadWeeklyComplexes();
                 if (btn.dataset.tab === 'negativists') loadNegativistsChats();
             });
         });
@@ -997,6 +1743,79 @@
             window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
         }
 
+        function initialsFromName(name) {
+            const clean = String(name || '').trim();
+            if (!clean) return 'A';
+            return clean
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map(part => part[0])
+                .join('')
+                .toUpperCase();
+        }
+
+        function authStatusBadge(isAuthorized) {
+            return isAuthorized
+                ? '<span class="status-label ok">Авторизован</span>'
+                : '<span class="status-label warn">Не авторизован</span>';
+        }
+
+        function renderAccountRow({ name, contact, isAuthorized, badges = '', actions = '' }) {
+            return `
+                <div class="account-row">
+                    <div class="account-avatar">${escapeHtml(initialsFromName(name))}</div>
+                    <div class="account-name" title="${escapeHtml(name || '')}">${escapeHtml(name || 'Без названия')}</div>
+                    <div class="account-contact">${escapeHtml(contact || '')}</div>
+                    <div class="account-meta">
+                        ${authStatusBadge(isAuthorized)}
+                        ${badges}
+                    </div>
+                    <div class="account-actions">${actions}</div>
+                </div>
+            `;
+        }
+
+        function getChatComplexName(chat) {
+            return chat.complex_name || 'Без привязки к ЖК';
+        }
+
+        function sortChatsByComplex(chats) {
+            return [...chats].sort((a, b) => {
+                const aUnlinked = !a.complex_name;
+                const bUnlinked = !b.complex_name;
+                if (aUnlinked !== bUnlinked) return aUnlinked ? 1 : -1;
+                const byComplex = getChatComplexName(a).localeCompare(getChatComplexName(b), 'ru');
+                if (byComplex !== 0) return byComplex;
+                const aTitle = a.custom_name || a.original_title || '';
+                const bTitle = b.custom_name || b.original_title || '';
+                return aTitle.localeCompare(bTitle, 'ru');
+            });
+        }
+
+        function renderChatGroups(chats, renderItem) {
+            const sorted = sortChatsByComplex(chats);
+            const groups = [];
+            for (const chat of sorted) {
+                const name = getChatComplexName(chat);
+                let group = groups[groups.length - 1];
+                if (!group || group.name !== name) {
+                    group = { name, chats: [] };
+                    groups.push(group);
+                }
+                group.chats.push(chat);
+            }
+            return groups.map(group => `
+                <div class="chat-group">
+                    <div class="chat-group-header">
+                        <span>${escapeHtml(group.name)}</span>
+                        <span class="chat-group-count">· ${group.chats.length}</span>
+                    </div>
+                    ${group.chats.map(renderItem).join('')}
+                </div>
+            `).join('');
+        }
+
         // Accounts
         async function loadAccounts() {
             const container = document.getElementById('accounts-list');
@@ -1006,25 +1825,18 @@
                     container.innerHTML = '<div class="empty-state">Нет добавленных аккаунтов</div>';
                     return;
                 }
-                container.innerHTML = data.accounts.map(acc => `
-                    <div class="card" style="padding: 10px 15px;">
-                        <div style="display: grid; grid-template-columns: 250px 150px 1fr auto; align-items: center; gap: 10px;">
-                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
-                            <div style="color: #666; font-size: 13px;">${acc.phone}</div>
-                            <div></div>
-                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
-                                ${!acc.is_authorized
-                                    ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
-                                    : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>
-                                       <button class="btn btn-secondary btn-small" onclick="openServiceMessages(${acc.id})">Сообщения TG</button>`}
-                                <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
-                                ${acc.is_authorized
-                                    ? '<span class="badge badge-success">Авторизован</span>'
-                                    : '<span class="badge badge-warning">Не авторизован</span>'}
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
+                container.innerHTML = data.accounts.map(acc => renderAccountRow({
+                    name: acc.name,
+                    contact: acc.phone,
+                    isAuthorized: acc.is_authorized,
+                    actions: `
+                        ${!acc.is_authorized
+                            ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
+                            : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>
+                               <button class="btn btn-secondary btn-small" onclick="openServiceMessages(${acc.id})">Сообщения TG</button>`}
+                        <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
+                    `
+                })).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1119,26 +1931,24 @@
                     container.innerHTML = '<div class="empty-state">Нет добавленных Max аккаунтов</div>';
                     return;
                 }
-                container.innerHTML = data.accounts.map(acc => `
-                    <div class="card" style="padding: 10px 15px;">
-                        <div style="display: grid; grid-template-columns: 250px 150px 1fr auto; align-items: center; gap: 10px;">
-                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
-                            <div style="color: #666; font-size: 13px;">${acc.phone}</div>
-                            <div></div>
-                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
-                                ${!acc.is_authorized
-                                    ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
-                                    : `<button class="btn btn-success btn-small" onclick="syncMaxChats(${acc.id})">Синхронизировать</button>
-                                       <button class="btn btn-secondary btn-small" onclick="openMaxServiceMessages(${acc.id})">Сообщения Max</button>
-                                       <button class="btn btn-secondary btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Вручную</button>`}
-                                <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
-                                ${acc.is_authorized
-                                    ? '<span class="badge badge-success">Авторизован</span>'
-                                    : '<span class="badge badge-warning">Не авторизован</span>'}
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
+                container.innerHTML = data.accounts.map(acc => renderAccountRow({
+                    name: acc.name,
+                    contact: acc.phone,
+                    isAuthorized: acc.is_authorized,
+                    badges: acc.is_send_only ? '<span class="badge badge-warning">только отправка</span>' : '',
+                    actions: `
+                        ${!acc.is_authorized
+                            ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
+                            : acc.is_send_only
+                                ? `<button class="btn btn-success btn-small" onclick="syncMaxDeliveryChats(${acc.id})">Синхр. чаты отправки</button>
+                                   <button class="btn btn-secondary btn-small" onclick="startMaxAuth(${acc.id}, true)">Переавторизовать</button>`
+                                : `<button class="btn btn-success btn-small" onclick="syncMaxChats(${acc.id})">Синхронизировать</button>
+                                   <button class="btn btn-secondary btn-small" onclick="startMaxAuth(${acc.id}, true)">Переавторизовать</button>
+                                   <button class="btn btn-secondary btn-small" onclick="openMaxServiceMessages(${acc.id})">Сообщения Max</button>
+                                   <button class="btn btn-secondary btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Вручную</button>`}
+                        <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
+                    `
+                })).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1147,18 +1957,20 @@
         function showAddMaxAccountModal() {
             document.getElementById('max-account-name').value = '';
             document.getElementById('max-account-phone').value = '';
+            document.getElementById('max-account-send-only').checked = true;
             showModal('add-max-account-modal');
         }
 
         async function createMaxAccount() {
             const name = document.getElementById('max-account-name').value;
             const phone = document.getElementById('max-account-phone').value;
+            const isSendOnly = document.getElementById('max-account-send-only').checked;
             if (!name || !phone) {
                 alert('Заполните все поля');
                 return;
             }
             try {
-                await api('/api/max/accounts', 'POST', { name, phone });
+                await api('/api/max/accounts', 'POST', { name, phone, is_send_only: isSendOnly });
                 closeModal('add-max-account-modal');
                 loadMaxAccounts();
             } catch (e) {
@@ -1176,22 +1988,82 @@
             }
         }
 
-        async function startMaxAuth(accountId) {
+        async function startMaxAuth(accountId, forceCode = false) {
             try {
-                const result = await api(`/api/max/accounts/${accountId}/auth/start`, 'POST');
-                alert('Авторизация запущена. Подтвердите вход в приложении Max, затем нажмите "Подтвердить".');
-                // After user confirms in Max app, confirm auth
-                if (confirm('Вы подтвердили вход в Max? Нажмите OK для завершения авторизации.')) {
-                    const confirmResult = await api(`/api/max/accounts/${accountId}/auth/confirm`, 'POST');
-                    if (confirmResult.status === 'success') {
-                        alert('Авторизация Max успешна!');
-                        loadMaxAccounts();
-                    } else {
-                        alert('Ошибка: ' + (confirmResult.message || 'Не удалось подключиться'));
-                    }
+                const suffix = forceCode ? '?force_code=true' : '';
+                const result = await api(`/api/max/accounts/${accountId}/auth/start${suffix}`, 'POST');
+                if (result.status === 'success') {
+                    alert('Авторизация Max успешна!');
+                    loadMaxAccounts();
+                    return;
                 }
+                currentMaxAuthAccountId = accountId;
+                document.getElementById('max-auth-message').textContent =
+                    result.message || 'Введите код, который пришел по SMS или в приложение Max.';
+                document.getElementById('max-auth-code').value = '';
+                showModal('max-auth-modal');
+                setTimeout(() => document.getElementById('max-auth-code').focus(), 50);
             } catch (e) {
                 alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function verifyMaxAuthCode() {
+            const code = document.getElementById('max-auth-code').value.trim();
+            const messageEl = document.getElementById('max-auth-message');
+            const submitBtn = document.getElementById('max-auth-submit-btn');
+            if (!code) {
+                alert('Введите код Max');
+                return;
+            }
+            if (!currentMaxAuthAccountId) {
+                alert('Сначала нажмите "Авторизовать" у Max аккаунта');
+                return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Проверяю...';
+            messageEl.textContent = 'Проверяю код Max...';
+            try {
+                const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/verify`, 'POST', {
+                    account_id: currentMaxAuthAccountId,
+                    code,
+                    password: null
+                });
+                if (result.status === 'success') {
+                    closeModal('max-auth-modal');
+                    alert('Авторизация Max успешна!');
+                    loadMaxAccounts();
+                } else {
+                    messageEl.textContent = result.message || 'Код принят, но клиент Max еще подключается. Попробуйте подтвердить позже.';
+                }
+            } catch (e) {
+                messageEl.textContent = 'Ошибка: ' + e.message;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Подтвердить';
+            }
+        }
+
+        async function resendMaxAuthCode() {
+            const messageEl = document.getElementById('max-auth-message');
+            const resendBtn = document.getElementById('max-auth-resend-btn');
+            if (!currentMaxAuthAccountId) {
+                alert('Сначала нажмите "Авторизовать" у Max аккаунта');
+                return;
+            }
+            resendBtn.disabled = true;
+            resendBtn.textContent = 'Отправляю...';
+            messageEl.textContent = 'Запрашиваю новый код Max...';
+            try {
+                const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/resend-code`, 'POST');
+                messageEl.textContent = result.message || 'Новый код запрошен. Проверьте SMS и приложение Max.';
+                document.getElementById('max-auth-code').value = '';
+                document.getElementById('max-auth-code').focus();
+            } catch (e) {
+                messageEl.textContent = 'Ошибка: ' + e.message;
+            } finally {
+                resendBtn.disabled = false;
+                resendBtn.textContent = 'Отправить код еще раз';
             }
         }
 
@@ -1200,6 +2072,16 @@
                 const result = await api(`/api/max/accounts/${accountId}/sync`, 'POST');
                 alert(result.message);
                 loadChats();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function syncMaxDeliveryChats(accountId) {
+            try {
+                const result = await api(`/api/max/accounts/${accountId}/delivery-chats/sync`, 'POST');
+                alert(result.message);
+                loadComplexes();
             } catch (e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -1214,26 +2096,19 @@
                     container.innerHTML = '<div class="empty-state">Нет добавленных VK аккаунтов</div>';
                     return;
                 }
-                container.innerHTML = data.accounts.map(acc => `
-                    <div class="card" style="padding: 10px 15px;">
-                        <div style="display: grid; grid-template-columns: 250px 160px 1fr auto; align-items: center; gap: 10px;">
-                            <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${acc.name}</div>
-                            <div style="color: #666; font-size: 13px;">${acc.vk_user_id ? ('id' + acc.vk_user_id) : 'не привязан'}</div>
-                            <div></div>
-                            <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
-                                ${!acc.is_authorized
-                                    ? `<button class="btn btn-primary btn-small" onclick="showVkTokenModal(${acc.id})">Ввести токен</button>
-                                       <button class="btn btn-secondary btn-small" onclick="startVkAuth(${acc.id})">OAuth</button>`
-                                    : `<button class="btn btn-success btn-small" onclick="syncVkChats(${acc.id})">Синхронизировать</button>
-                                       <button class="btn btn-secondary btn-small" onclick="showVkTokenModal(${acc.id})">Обновить токен</button>`}
-                                <button class="btn btn-danger btn-small" onclick="deleteVkAccount(${acc.id})">Удалить</button>
-                                ${acc.is_authorized
-                                    ? '<span class="badge badge-success">Авторизован</span>'
-                                    : '<span class="badge badge-warning">Не авторизован</span>'}
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
+                container.innerHTML = data.accounts.map(acc => renderAccountRow({
+                    name: acc.name,
+                    contact: acc.vk_user_id ? ('id' + acc.vk_user_id) : 'не привязан',
+                    isAuthorized: acc.is_authorized,
+                    actions: `
+                        ${!acc.is_authorized
+                            ? `<button class="btn btn-primary btn-small" onclick="showVkTokenModal(${acc.id})">Ввести токен</button>
+                               <button class="btn btn-secondary btn-small" onclick="startVkAuth(${acc.id})">OAuth</button>`
+                            : `<button class="btn btn-success btn-small" onclick="syncVkChats(${acc.id})">Синхронизировать</button>
+                               <button class="btn btn-secondary btn-small" onclick="showVkTokenModal(${acc.id})">Обновить токен</button>`}
+                        <button class="btn btn-danger btn-small" onclick="deleteVkAccount(${acc.id})">Удалить</button>
+                    `
+                })).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1505,32 +2380,132 @@
         }
 
         // Complexes
+        let maxDeliveryChatsByAccount = {};
+        let maxTargetExisting = {};
+
         async function loadComplexes() {
             const container = document.getElementById('complexes-list');
             try {
-                const data = await api('/api/complexes');
+                const [data, maxData, deliveryData] = await Promise.all([
+                    api('/api/complexes'),
+                    api('/api/max/accounts'),
+                    api('/api/max/delivery-chats')
+                ]);
                 if (data.complexes.length === 0) {
                     container.innerHTML = '<div class="empty-state">Нет добавленных ЖК</div>';
                     return;
                 }
-                container.innerHTML = data.complexes.map(c => `
-                    <div class="card">
-                        <div class="card-header">
-                            <div class="card-title">${c.name}</div>
-                            <button class="btn btn-danger btn-small" onclick="deleteComplex(${c.id})">Удалить</button>
+                const maxAccounts = (maxData.accounts || []).filter(acc => !!acc.is_send_only);
+                const deliveryChats = deliveryData.chats || [];
+                maxDeliveryChatsByAccount = {};
+                maxTargetExisting = {};
+                for (const chat of deliveryChats) {
+                    const accountId = String(chat.max_account_id);
+                    if (!maxDeliveryChatsByAccount[accountId]) maxDeliveryChatsByAccount[accountId] = [];
+                    maxDeliveryChatsByAccount[accountId].push(chat);
+                }
+
+                const maxOptions = maxAccounts.map(acc =>
+                    `<option value="${acc.id}">${escapeHtml(acc.name)} (${escapeHtml(acc.phone)})</option>`
+                ).join('');
+
+                container.innerHTML = data.complexes.map(c => {
+                    maxTargetExisting[String(c.id)] = {
+                        account_id: c.max_target_account_id ? String(c.max_target_account_id) : '',
+                        chat_id: c.max_target_chat_id ? String(c.max_target_chat_id) : '',
+                        title: c.max_target_chat_title || ''
+                    };
+                    const accountSelect = maxAccounts.length > 0
+                        ? `<select id="max-target-account-${c.id}" onchange="refreshMaxTargetChatOptions(${c.id})">
+	                               <option value="">Служебный Max...</option>
+	                               ${maxOptions}
+	                           </select>`
+                        : `<select id="max-target-account-${c.id}" disabled>
+	                               <option value="">Нет служебных Max аккаунтов</option>
+	                           </select>`;
+
+                    return `
+                        <div class="complex-row">
+                            <div>
+                                <div class="complex-name">${escapeHtml(c.name)}</div>
+                                <button class="btn btn-danger btn-small" onclick="deleteComplex(${c.id})" style="margin-top: 8px;">Удалить</button>
+                            </div>
+                            <div class="complex-controls">
+                                <div class="complex-control-line">
+                                    <input type="text" id="sheet-url-${c.id}"
+                                        placeholder="Ссылка на Google Таблицу..."
+                                        value="${c.google_sheet_id ? 'https://docs.google.com/spreadsheets/d/' + c.google_sheet_id : ''}">
+                                    <button class="btn btn-secondary btn-small" onclick="saveComplexSheet(${c.id})">Сохранить таблицу</button>
+                                </div>
+                                <div class="complex-control-line">
+                                    ${accountSelect}
+                                    <select id="max-target-chat-${c.id}" onchange="syncMaxTargetTitle(${c.id})">
+                                        <option value="">Сначала синхронизируйте чаты отправки</option>
+                                    </select>
+                                    <input type="text" id="max-target-title-${c.id}"
+                                        placeholder="Название чата (опционально)"
+                                        value="${escapeHtml(c.max_target_chat_title || '')}">
+                                    <button class="btn btn-secondary btn-small" onclick="saveComplexMaxTarget(${c.id})">Сохранить MAX</button>
+                                </div>
+                            </div>
                         </div>
-                        <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <input type="text" id="sheet-url-${c.id}"
-                                placeholder="Ссылка на Google Таблицу..."
-                                value="${c.google_sheet_id ? 'https://docs.google.com/spreadsheets/d/' + c.google_sheet_id : ''}"
-                                style="flex: 1; min-width: 200px; padding: 6px 10px; border: 1px solid #d4a0ab; border-radius: 6px; font-size: 13px;">
-                            <button class="btn btn-secondary btn-small" onclick="saveComplexSheet(${c.id})">Сохранить таблицу</button>
-                        </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
+
+                for (const c of data.complexes) {
+                    const select = document.getElementById(`max-target-account-${c.id}`);
+                    if (select && c.max_target_account_id) select.value = String(c.max_target_account_id);
+                    refreshMaxTargetChatOptions(c.id, true);
+                }
             } catch (e) {
-                container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+                container.innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
             }
+        }
+
+        function refreshMaxTargetChatOptions(complexId, keepExisting = false) {
+            const accountSelect = document.getElementById(`max-target-account-${complexId}`);
+            const chatSelect = document.getElementById(`max-target-chat-${complexId}`);
+            const titleInput = document.getElementById(`max-target-title-${complexId}`);
+            if (!accountSelect || !chatSelect) return;
+
+            const existing = maxTargetExisting[String(complexId)] || {};
+            const accountId = accountSelect.value || '';
+            const selectedChatId = keepExisting ? (existing.chat_id || '') : '';
+            const chats = accountId ? (maxDeliveryChatsByAccount[String(accountId)] || []) : [];
+
+            if (!accountId) {
+                chatSelect.innerHTML = '<option value="">Выберите служебный Max</option>';
+                if (!keepExisting && titleInput) titleInput.value = '';
+                return;
+            }
+
+            const options = ['<option value="">Выберите чат отправки...</option>'];
+            let selectedFound = false;
+            for (const chat of chats) {
+                const chatId = String(chat.max_chat_id);
+                const selected = selectedChatId && chatId === selectedChatId ? ' selected' : '';
+                if (selected) selectedFound = true;
+                options.push(`<option value="${chatId}" data-title="${escapeHtml(chat.title || '')}"${selected}>${escapeHtml(chat.title || chatId)} (${chatId})</option>`);
+            }
+            if (selectedChatId && !selectedFound) {
+                const title = existing.title || selectedChatId;
+                options.push(`<option value="${escapeHtml(selectedChatId)}" data-title="${escapeHtml(title)}" selected>${escapeHtml(title)} (${escapeHtml(selectedChatId)})</option>`);
+            }
+            if (chats.length === 0 && !selectedChatId) {
+                options.push('<option value="" disabled>Нет синхронизированных чатов</option>');
+            }
+            chatSelect.innerHTML = options.join('');
+            if (keepExisting && titleInput && existing.title) titleInput.value = existing.title;
+            if (!keepExisting) syncMaxTargetTitle(complexId);
+        }
+
+        function syncMaxTargetTitle(complexId) {
+            const chatSelect = document.getElementById(`max-target-chat-${complexId}`);
+            const titleInput = document.getElementById(`max-target-title-${complexId}`);
+            if (!chatSelect || !titleInput) return;
+            const option = chatSelect.options[chatSelect.selectedIndex];
+            const title = option ? (option.dataset.title || '') : '';
+            if (title) titleInput.value = title;
         }
 
         async function createComplex() {
@@ -1568,6 +2543,32 @@
                 setTimeout(() => { input.style.borderColor = ''; }, 1500);
             } catch (e) {
                 alert('Ошибка сохранения таблицы: ' + e.message);
+            }
+        }
+
+        async function saveComplexMaxTarget(id) {
+            const accountSelect = document.getElementById(`max-target-account-${id}`);
+            const chatInput = document.getElementById(`max-target-chat-${id}`);
+            const titleInput = document.getElementById(`max-target-title-${id}`);
+            if (!accountSelect || !chatInput) return;
+
+            const accountId = accountSelect.value ? parseInt(accountSelect.value) : null;
+            const chatId = chatInput.value.trim() ? parseInt(chatInput.value.trim()) : null;
+            if ((accountId && !chatId) || (!accountId && chatId)) {
+                alert('Для MAX-отправки нужны и аккаунт, и chat_id');
+                return;
+            }
+
+            try {
+                await api(`/api/complexes/${id}/max-target`, 'PUT', {
+                    max_account_id: accountId,
+                    max_chat_id: chatId,
+                    chat_title: titleInput ? titleInput.value.trim() : ''
+                });
+                chatInput.style.borderColor = '#4caf50';
+                setTimeout(() => { chatInput.style.borderColor = ''; }, 1500);
+            } catch (e) {
+                alert('Ошибка сохранения MAX-чата: ' + e.message);
             }
         }
 
@@ -1621,36 +2622,36 @@
             if (monitoredOnly) url += `monitored_only=true`;
 
             try {
-                const data = await api(url);
-                if (data.chats.length === 0) {
-                    container.innerHTML = '<div class="empty-state">Нет чатов. Синхронизируйте аккаунты.</div>';
-                    return;
-                }
-                container.innerHTML = data.chats.map(chat => {
-                    const source = chat.source || 'telegram';
-                    const sourceBadge = source === 'max'
-                        ? '<span class="badge" style="background:#1976d2;color:white;">Max</span>'
+                    const data = await api(url);
+                    if (data.chats.length === 0) {
+                        container.innerHTML = '<div class="empty-state">Нет чатов. Синхронизируйте аккаунты.</div>';
+                        return;
+                    }
+                    container.innerHTML = renderChatGroups(data.chats, chat => {
+                        const source = chat.source || 'telegram';
+                        const sourceBadge = source === 'max'
+                        ? '<span class="badge platform-badge max">Max</span>'
                         : source === 'vk'
-                        ? '<span class="badge" style="background:#4a76a8;color:white;">VK</span>'
-                        : '<span class="badge" style="background:#0088cc;color:white;">TG</span>';
-                    return `
-                    <div class="chat-item ${chat.is_monitored ? 'monitored' : ''}">
-                        <div class="chat-info">
-                            <div class="chat-title">${sourceBadge} ${chat.custom_name || chat.original_title}</div>
-                            <div class="chat-meta">
-                                ${chat.custom_name ? `<span>Оригинал: ${chat.original_title}</span> | ` : ''}
-                                <span>Аккаунт: ${chat.account_name || 'N/A'}</span>
-                                ${chat.complex_name ? ` | <span class="badge badge-info">${chat.complex_name}</span>` : ''}
+                        ? '<span class="badge platform-badge vk">VK</span>'
+                        : '<span class="badge platform-badge tg">TG</span>';
+                        return `
+                        <div class="chat-item ${chat.is_monitored ? 'monitored' : ''}">
+                            <div class="chat-info">
+                                <div class="chat-title">${sourceBadge} ${escapeHtml(chat.custom_name || chat.original_title)}</div>
+                                <div class="chat-meta">
+                                    ${chat.custom_name ? `<span>Оригинал: ${escapeHtml(chat.original_title)}</span> | ` : ''}
+                                    <span>Аккаунт: ${escapeHtml(chat.account_name || 'N/A')}</span>
+                                    ${chat.complex_name ? ` | <span class="badge badge-info">${escapeHtml(chat.complex_name)}</span>` : ''}
+                                </div>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+                                ${chat.is_monitored
+                                    ? '<span class="badge badge-success">Мониторинг</span>'
+                                    : '<span class="badge badge-warning">Выключен</span>'}
+                                <button class="btn btn-primary btn-small" onclick="editChat(${chat.id})">Настроить</button>
                             </div>
                         </div>
-                        <div>
-                            ${chat.is_monitored
-                                ? '<span class="badge badge-success">Мониторинг</span>'
-                                : ''}
-                            <button class="btn btn-primary btn-small" onclick="editChat(${chat.id})">Настроить</button>
-                        </div>
-                    </div>
-                `}).join('');
+                    `});
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1770,11 +2771,11 @@
                 }
                 container.innerHTML = data.complexes.map(c => `
                     <label style="display: flex; align-items: center; gap: 10px; margin: 8px 0; cursor: pointer; font-size: 15px;">
-                        <input type="checkbox" class="report-complex-checkbox" value="${c.id}" checked
-                               style="width: 20px; height: 20px; accent-color: #800020; cursor: pointer; flex-shrink: 0;">
-                        ${c.name}
-                    </label>
-                `).join('');
+	                        <input type="checkbox" class="report-complex-checkbox" value="${c.id}" checked
+	                               style="width: 20px; height: 20px; accent-color: #800020; cursor: pointer; flex-shrink: 0;">
+	                        ${escapeHtml(c.name)}
+	                    </label>
+	                `).join('');
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -1789,6 +2790,42 @@
             document.getElementById('report-start-date').value = formatDateForInput(yesterday);
         }
 
+        async function loadReportArchiveDoc() {
+            const input = document.getElementById('report-archive-doc-url');
+            const status = document.getElementById('report-archive-doc-status');
+            if (!input) return;
+            try {
+                const data = await api('/api/report-archive-doc');
+                input.value = data.google_doc_url || '';
+                if (status) status.textContent = data.google_doc_url ? 'архив подключен' : '';
+            } catch (e) {
+                if (status) status.textContent = 'ошибка загрузки ссылки';
+            }
+        }
+
+        async function saveReportArchiveDoc() {
+            const input = document.getElementById('report-archive-doc-url');
+            const status = document.getElementById('report-archive-doc-status');
+            if (!input) return;
+            try {
+                const data = await api('/api/report-archive-doc', 'PUT', {
+                    google_doc_url: input.value.trim()
+                });
+                input.value = data.google_doc_url || '';
+                if (status) {
+                    status.textContent = 'сохранено';
+                    status.style.color = '#2e7d32';
+                    setTimeout(() => { status.textContent = data.google_doc_url ? 'архив подключен' : ''; status.style.color = '#666'; }, 1800);
+                }
+            } catch (e) {
+                if (status) {
+                    status.textContent = 'ошибка сохранения';
+                    status.style.color = '#c62828';
+                }
+                alert('Ошибка сохранения Google Doc: ' + e.message);
+            }
+        }
+
         function formatDateForInput(date) {
             const y = date.getFullYear();
             const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -1796,6 +2833,13 @@
             const h = String(date.getHours()).padStart(2, '0');
             const min = String(date.getMinutes()).padStart(2, '0');
             return `${y}-${m}-${d}T${h}:${min}`;
+        }
+
+        function formatDateOnlyForInput(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
         }
 
         function getISODateFromInput(inputId) {
@@ -1835,7 +2879,100 @@
             return value; // Return as is, let backend handle error
         }
 
+        function expandTextareaToContent(textarea) {
+            if (!textarea) return;
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight + 2}px`;
+        }
+
+        function bindAutoResizeTextareas(root) {
+            root.querySelectorAll('textarea.report-content').forEach(textarea => {
+                expandTextareaToContent(textarea);
+                textarea.addEventListener('input', () => expandTextareaToContent(textarea));
+            });
+        }
+
+        let reportGenerationInProgress = false;
+        let weeklyGenerationInProgress = false;
+        let reportProgressLogItems = [];
+
+        function resetReportProgressUI() {
+            reportProgressLogItems = [];
+            updateReportProgressUI({
+                status: 'queued',
+                percent: 0,
+                title: 'Генерация сводки',
+                detail: 'Подготавливаю задачу...',
+                current_complex: '-',
+                current_chat: '-',
+                current_source: '-'
+            });
+        }
+
+        function setReportProgressText(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value || '-';
+        }
+
+        function updateReportProgressUI(progress) {
+            const percent = Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0))));
+            const fill = document.getElementById('report-progress-fill');
+            const percentEl = document.getElementById('report-progress-percent');
+            const titleEl = document.getElementById('report-progress-title');
+            const detailEl = document.getElementById('report-progress-detail');
+            const logEl = document.getElementById('report-progress-log');
+
+            if (fill) {
+                fill.style.width = `${percent}%`;
+                fill.classList.toggle('running', progress.status !== 'done' && progress.status !== 'error');
+            }
+            if (percentEl) percentEl.textContent = `${percent}%`;
+            if (titleEl) titleEl.textContent = progress.title || 'Генерация сводки';
+            if (detailEl) detailEl.textContent = progress.detail || '';
+
+            setReportProgressText('report-progress-complex', progress.current_complex || '-');
+            setReportProgressText('report-progress-chat', progress.current_chat || '-');
+            setReportProgressText('report-progress-source', progress.current_source || '-');
+
+            const logText = [progress.title, progress.detail].filter(Boolean).join(' — ');
+            if (logText && reportProgressLogItems[0] !== logText) {
+                reportProgressLogItems.unshift(logText);
+                reportProgressLogItems = reportProgressLogItems.slice(0, 5);
+            }
+
+            if (logEl) {
+                logEl.innerHTML = reportProgressLogItems.map((item, index) => `
+                    <div class="report-progress-log-item" style="opacity:${index === 0 ? 1 : .68}">
+                        <span class="report-progress-dot"></span>
+                        <span>${escapeHtml(item)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function waitForReportProgress(jobId) {
+            while (reportGenerationInProgress) {
+                const progress = await api(`/api/reports/generate/progress/${jobId}`);
+                updateReportProgressUI(progress);
+
+                if (progress.status === 'done') {
+                    return progress.result;
+                }
+                if (progress.status === 'error') {
+                    throw new Error(progress.error || progress.detail || 'Ошибка генерации');
+                }
+
+                await sleep(900);
+            }
+            return null;
+        }
+
         async function generateReport() {
+            if (reportGenerationInProgress) return;
             const checkboxes = document.querySelectorAll('.report-complex-checkbox:checked');
             const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
             const startDate = getISODateFromInput('report-start-date');
@@ -1853,22 +2990,36 @@
 
             const loadingEl = document.getElementById('report-loading');
             const resultEl = document.getElementById('report-result');
+            const generateBtn = document.getElementById('generate-report-btn');
 
+            reportGenerationInProgress = true;
+            if (generateBtn) generateBtn.disabled = true;
+            resetReportProgressUI();
             loadingEl.style.display = 'block';
             resultEl.innerHTML = '';
 
             try {
-                const report = await api('/api/reports/generate', 'POST', {
+                const job = await api('/api/reports/generate/start', 'POST', {
                     complex_ids: complexIds,
                     start_date: startDate,
                     end_date: endDate
                 });
+                updateReportProgressUI(job);
 
+                const report = await waitForReportProgress(job.job_id);
                 loadingEl.style.display = 'none';
-                renderReport(report);
+                if (report) renderReport(report);
             } catch (e) {
-                loadingEl.style.display = 'none';
-                resultEl.innerHTML = `<div class="alert alert-error">Ошибка: ${e.message}</div>`;
+                updateReportProgressUI({
+                    status: 'error',
+                    percent: 100,
+                    title: 'Ошибка генерации',
+                    detail: e.message
+                });
+                resultEl.innerHTML = `<div class="alert alert-error">Ошибка: ${escapeHtml(e.message)}</div>`;
+            } finally {
+                reportGenerationInProgress = false;
+                if (generateBtn) generateBtn.disabled = false;
             }
         }
 
@@ -1899,13 +3050,15 @@
                             ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
                         </span>
                     </div>
-                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                        <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
-                        ${isAI ? `<button class="btn btn-small sheets-btn" id="sheets-export-btn" onclick="exportToSheets('${startDate.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'})}')">Выгрузить в Google Таблицы</button>` : ''}
-                    </div>
-                </div>
-                <div id="sheets-export-result"></div>
-            `;
+	                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+	                        <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
+	                        ${isAI ? '<button class="btn btn-small copy-btn" id="save-all-daily-btn" onclick="saveAllDailyReportsToArchive()">Сохранить все в Google Doc</button>' : ''}
+	                        ${isAI ? `<button class="btn btn-small sheets-btn" id="sheets-export-btn" onclick="exportToSheets('${startDate.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'})}')">Выгрузить в Google Таблицы</button>` : ''}
+	                    </div>
+	                </div>
+	                <div id="save-all-daily-status"></div>
+	                <div id="sheets-export-result"></div>
+	            `;
 
             for (const complex of report.complexes) {
                 // Calculate total messages for complex
@@ -1923,7 +3076,13 @@
                 if (isAI && complex.summary) {
                     html += `
                         <div class="report-chat">
-                            <div class="report-content" style="white-space: pre-wrap; line-height: 1.8;">${escapeHtml(complex.summary)}</div>
+                            <textarea id="daily-summary-${complex.complex_id}" class="report-content"
+                                style="width: 100%; min-height: 260px;">${escapeHtml(complex.summary)}</textarea>
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px;">
+                                <button class="btn btn-secondary btn-small" onclick="saveDailyReport(${complex.complex_id}, false)">Сохранить в базу</button>
+                                <button class="btn btn-success btn-small" onclick="saveDailyReport(${complex.complex_id}, true)">Отправить в MAX</button>
+                                <span id="daily-report-status-${complex.complex_id}" style="font-size: 13px; color: #666;"></span>
+                            </div>
                         </div>
                     `;
                 } else {
@@ -1954,6 +3113,143 @@
             }
 
             container.innerHTML = html;
+            bindAutoResizeTextareas(container);
+        }
+
+        function getReportComplexById(complexId) {
+            if (!lastReport) return null;
+            return lastReport.complexes.find(c => Number(c.complex_id) === Number(complexId)) || null;
+        }
+
+        function getEditedDailySummary(complexId) {
+            const textarea = document.getElementById(`daily-summary-${complexId}`);
+            const complex = getReportComplexById(complexId);
+            return textarea ? textarea.value : (complex ? complex.summary : '');
+        }
+
+        async function saveDailyReportPayload(complex, editedText, sendToMax) {
+            const endpoint = sendToMax ? '/api/reports/send-to-max' : '/api/reports/save';
+            return api(endpoint, 'POST', {
+                report_type: 'daily',
+                complex_id: complex.complex_id,
+                complex_name: complex.complex_name,
+                period_start: lastReport.period_start,
+                period_end: lastReport.period_end,
+                original_text: complex.summary || '',
+                edited_text: editedText,
+                archive_to_google_doc: !sendToMax
+            });
+        }
+
+        async function saveDailyReport(complexId, sendToMax) {
+            const complex = getReportComplexById(complexId);
+            const status = document.getElementById(`daily-report-status-${complexId}`);
+            if (!lastReport || !complex) return;
+
+            const editedText = getEditedDailySummary(complexId).trim();
+            if (!editedText) {
+                alert('Сводка пустая');
+                return;
+            }
+
+            if (status) {
+                status.textContent = sendToMax ? 'отправляю...' : 'сохраняю...';
+                status.style.color = '#666';
+            }
+
+            try {
+                const result = await saveDailyReportPayload(complex, editedText, sendToMax);
+                complex.summary = editedText;
+
+                let statusText = sendToMax ? 'отправлено в MAX' : 'сохранено';
+                if (result.google_doc_status === 'success') statusText += ', Google Doc обновлен';
+                if (result.google_doc_status === 'error') statusText += ', Google Doc: ошибка';
+                if (status) {
+                    status.textContent = statusText;
+                    status.style.color = result.google_doc_status === 'error' ? '#c77a00' : '#2e7d32';
+                }
+                if (result.google_doc_error) {
+                    console.warn('Google Doc archive error:', result.google_doc_error);
+                }
+            } catch (e) {
+                if (status) {
+                    status.textContent = 'ошибка';
+                    status.style.color = '#c62828';
+                }
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function saveAllDailyReportsToArchive() {
+            if (!lastReport || lastReport.mode !== 'ai') return;
+            const btn = document.getElementById('save-all-daily-btn');
+            const status = document.getElementById('save-all-daily-status');
+            const complexes = lastReport.complexes.filter(c => c.summary || document.getElementById(`daily-summary-${c.complex_id}`));
+            if (complexes.length === 0) {
+                if (status) status.innerHTML = '<div class="alert alert-error" style="font-size:13px;">Нет сводок для сохранения</div>';
+                return;
+            }
+
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Сохраняю...';
+            }
+            if (status) {
+                status.innerHTML = '<div style="color: var(--muted); font-size: 13px; padding: 8px 0;">Сохраняю сводки в Google Doc...</div>';
+            }
+
+            let ok = 0;
+            let failed = 0;
+            const errors = [];
+            for (const complex of complexes) {
+                const editedText = getEditedDailySummary(complex.complex_id).trim();
+                const itemStatus = document.getElementById(`daily-report-status-${complex.complex_id}`);
+                if (!editedText) {
+                    failed += 1;
+                    errors.push(`${complex.complex_name}: пустая сводка`);
+                    continue;
+                }
+                if (itemStatus) {
+                    itemStatus.textContent = 'сохраняю...';
+                    itemStatus.style.color = '#666';
+                }
+                try {
+                    const result = await saveDailyReportPayload(complex, editedText, false);
+                    complex.summary = editedText;
+                    if (result.google_doc_status === 'error') {
+                        failed += 1;
+                        errors.push(`${complex.complex_name}: Google Doc ошибка`);
+                        if (itemStatus) {
+                            itemStatus.textContent = 'Google Doc: ошибка';
+                            itemStatus.style.color = '#c77a00';
+                        }
+                    } else {
+                        ok += 1;
+                        if (itemStatus) {
+                            itemStatus.textContent = 'сохранено, Google Doc обновлен';
+                            itemStatus.style.color = '#2e7d32';
+                        }
+                    }
+                } catch (e) {
+                    failed += 1;
+                    errors.push(`${complex.complex_name}: ${e.message}`);
+                    if (itemStatus) {
+                        itemStatus.textContent = 'ошибка';
+                        itemStatus.style.color = '#c62828';
+                    }
+                }
+            }
+
+            if (status) {
+                const details = errors.length
+                    ? `<div style="margin-top:6px; color: var(--danger);">${errors.map(escapeHtml).join('<br>')}</div>`
+                    : '';
+                status.innerHTML = `<div class="alert ${failed ? 'alert-error' : 'alert-success'}" style="font-size:13px;">Сохранено: ${ok}, ошибок: ${failed}${details}</div>`;
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Сохранить все в Google Doc';
+            }
         }
 
         function copyReportAsText() {
@@ -1971,7 +3267,7 @@
 
                 // If AI summary present, copy that
                 if (isAI && complex.summary) {
-                    text += complex.summary + '\n\n';
+                    text += getEditedDailySummary(complex.complex_id) + '\n\n';
                 } else {
                     // Copy structured format
                     for (const chat of complex.chats) {
@@ -1997,6 +3293,205 @@
             });
         }
 
+        let lastWeeklyReport = null;
+        let weeklyRulesLoaded = false;
+
+        async function loadWeeklyComplexes() {
+            const container = document.getElementById('weekly-complexes');
+            try {
+                const data = await api('/api/complexes');
+                if (data.complexes.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Нет добавленных ЖК</div>';
+                    return;
+                }
+
+                container.innerHTML = data.complexes.map(c => {
+                    const hasSheet = !!c.google_sheet_id;
+                    return `
+                        <label style="display: flex; align-items: center; gap: 10px; margin: 8px 0; cursor: ${hasSheet ? 'pointer' : 'default'}; font-size: 15px; opacity: ${hasSheet ? '1' : '0.55'};">
+                            <input type="checkbox" class="weekly-complex-checkbox" value="${c.id}" ${hasSheet ? 'checked' : 'disabled'}
+                                   style="width: 20px; height: 20px; accent-color: #800020; cursor: pointer; flex-shrink: 0;">
+                            <span>${escapeHtml(c.name)}</span>
+                            ${hasSheet ? '<span class="badge badge-success">таблица</span>' : '<span class="badge badge-warning">нет таблицы</span>'}
+                        </label>
+                    `;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
+            }
+
+            const now = new Date();
+            const weekAgo = new Date(now);
+            weekAgo.setDate(weekAgo.getDate() - 6);
+            document.getElementById('weekly-start-date').value = formatDateOnlyForInput(weekAgo);
+            document.getElementById('weekly-end-date').value = formatDateOnlyForInput(now);
+        }
+
+        async function toggleWeeklyRules() {
+            const panel = document.getElementById('weekly-rules-panel');
+            const btn = document.getElementById('weekly-rules-toggle-btn');
+            const textarea = document.getElementById('weekly-rules-textarea');
+
+            if (panel.style.display === 'none') {
+                if (!weeklyRulesLoaded) {
+                    try {
+                        const data = await api('/api/weekly-report-rules');
+                        textarea.value = data.rules;
+                        weeklyRulesLoaded = true;
+                    } catch (e) {
+                        textarea.value = 'Ошибка загрузки регламента: ' + e.message;
+                    }
+                }
+                panel.style.display = 'block';
+                btn.textContent = 'Скрыть регламент';
+            } else {
+                panel.style.display = 'none';
+                btn.textContent = 'Показать регламент';
+            }
+        }
+
+        async function saveWeeklyRules() {
+            const textarea = document.getElementById('weekly-rules-textarea');
+            const rules = textarea.value.trim();
+            if (!rules) {
+                alert('Регламент не может быть пустым');
+                return;
+            }
+            try {
+                await api('/api/weekly-report-rules', 'PUT', { rules });
+                alert('Регламент сохранен!');
+            } catch (e) {
+                alert('Ошибка сохранения: ' + e.message);
+            }
+        }
+
+        async function resetWeeklyRules() {
+            if (!confirm('Сбросить недельный регламент к исходному? Все ваши изменения будут потеряны.')) return;
+            try {
+                const data = await api('/api/weekly-report-rules/reset', 'POST');
+                document.getElementById('weekly-rules-textarea').value = data.rules;
+                weeklyRulesLoaded = true;
+                alert('Регламент сброшен к исходному');
+            } catch (e) {
+                alert('Ошибка сброса: ' + e.message);
+            }
+        }
+
+        async function generateWeeklyReport() {
+            if (weeklyGenerationInProgress) return;
+            const checkboxes = document.querySelectorAll('.weekly-complex-checkbox:checked');
+            const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            const startDate = document.getElementById('weekly-start-date').value;
+            const endDate = document.getElementById('weekly-end-date').value;
+
+            if (complexIds.length === 0) {
+                alert('Выберите хотя бы один ЖК с привязанной таблицей');
+                return;
+            }
+            if (!startDate || !endDate) {
+                alert('Выберите период');
+                return;
+            }
+
+            const loadingEl = document.getElementById('weekly-loading');
+            const resultEl = document.getElementById('weekly-result');
+            const generateBtn = document.getElementById('generate-weekly-report-btn');
+            weeklyGenerationInProgress = true;
+            if (generateBtn) generateBtn.disabled = true;
+            loadingEl.style.display = 'block';
+            resultEl.innerHTML = '';
+
+            try {
+                const result = await api('/api/weekly-reports/generate', 'POST', {
+                    complex_ids: complexIds,
+                    start_date: startDate,
+                    end_date: endDate
+                });
+                loadingEl.style.display = 'none';
+                lastWeeklyReport = result;
+                renderWeeklyReport(result);
+            } catch (e) {
+                loadingEl.style.display = 'none';
+                resultEl.innerHTML = `<div class="alert alert-error">Ошибка: ${escapeHtml(e.message)}</div>`;
+            } finally {
+                weeklyGenerationInProgress = false;
+                if (generateBtn) generateBtn.disabled = false;
+            }
+        }
+
+        function renderWeeklyReport(report) {
+            const container = document.getElementById('weekly-result');
+            const startDate = new Date(report.period_start);
+            const endDate = new Date(report.period_end);
+            const period = `${startDate.toLocaleDateString('ru-RU')} — ${endDate.toLocaleDateString('ru-RU')}`;
+
+            let html = `
+                <div class="alert alert-success" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <strong>недельная сводка</strong><br>
+                        <span style="font-size: 13px; color: #666;">${period}</span>
+                    </div>
+                    <button class="btn btn-small copy-btn" onclick="copyWeeklyReportAsText()">Копировать</button>
+                </div>
+            `;
+
+            for (const item of report.results) {
+                html += `
+                    <div class="report-section">
+                        <div class="report-header">
+                            ${escapeHtml(item.complex_name)}
+                            <span style="font-size: 14px; opacity: 0.8; margin-left: 10px;">${item.rows_count} строк из таблицы</span>
+                        </div>
+                `;
+
+                if (!item.success) {
+                    html += `<div class="alert alert-error">${escapeHtml(item.message)}</div></div>`;
+                    continue;
+                }
+
+                html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">';
+                for (const summary of item.summaries) {
+                    html += `
+                        <div class="card" style="background: white;">
+                            <div class="card-header">
+                                <div>
+                                    <div class="card-title">${escapeHtml(summary.label)}</div>
+                                    <div class="card-subtitle">${escapeHtml(summary.id)}</div>
+                                </div>
+                                ${summary.success === false ? '<span class="badge badge-warning">ошибка</span>' : '<span class="badge badge-success">готово</span>'}
+                            </div>
+                            <div class="report-content" style="white-space: pre-wrap; line-height: 1.7;">${escapeHtml(summary.summary)}</div>
+                        </div>
+                    `;
+                }
+                html += '</div></div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function copyWeeklyReportAsText() {
+            if (!lastWeeklyReport) return;
+            let text = '';
+            for (const item of lastWeeklyReport.results) {
+                text += `${item.complex_name}\n\n`;
+                for (const summary of item.summaries || []) {
+                    text += `${summary.label}\n${summary.summary}\n\n`;
+                }
+            }
+            navigator.clipboard.writeText(text.trim()).then(() => {
+                alert('Недельная сводка скопирована в буфер обмена!');
+            }).catch(() => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text.trim();
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Недельная сводка скопирована!');
+            });
+        }
+
         async function exportToSheets(dateStr) {
             if (!lastReport) return;
             if (lastReport.mode !== 'ai') {
@@ -2018,7 +3513,7 @@
                 .map(c => ({
                     complex_id: c.complex_id,
                     complex_name: c.complex_name,
-                    summary: c.summary,
+                    summary: getEditedDailySummary(c.complex_id),
                 }));
 
             if (complexes.length === 0) {
@@ -2118,21 +3613,15 @@
                     container.innerHTML = '<div class="empty-state">Нет чатов на мониторинге. Добавьте чаты во вкладке "Чаты".</div>';
                     return;
                 }
-                // Sort by complex name (ЖК)
-                const sortedChats = data.chats.sort((a, b) => {
-                    const nameA = a.complex_name || 'яяя';
-                    const nameB = b.complex_name || 'яяя';
-                    return nameA.localeCompare(nameB, 'ru');
-                });
-                container.innerHTML = sortedChats.map(chat => `
-                    <label style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 6px; cursor: pointer; background: white;">
+                container.innerHTML = renderChatGroups(data.chats, chat => `
+                    <label style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border-row); cursor: pointer; background: white;">
                         <input type="checkbox" class="negativists-chat-checkbox" value="${chat.id}"
                                data-telegram-id="${chat.telegram_id}" data-account-id="${chat.account_id}"
-                               style="width: 18px; height: 18px; flex-shrink: 0;">
-                        <span style="flex: 1; font-weight: 500;">${chat.custom_name || chat.original_title}</span>
-                        ${chat.complex_name ? `<span class="badge badge-info" style="flex-shrink: 0;">${chat.complex_name}</span>` : ''}
+                               style="width: 16px; height: 16px; flex-shrink: 0;">
+                        <span style="flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(chat.custom_name || chat.original_title)}</span>
+                        ${chat.complex_name ? `<span class="badge badge-info" style="flex-shrink: 0;">${escapeHtml(chat.complex_name)}</span>` : ''}
                     </label>
-                `).join('');
+                `);
             } catch (e) {
                 container.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
             }
@@ -2239,10 +3728,17 @@
             const container = document.getElementById('negativists-result');
 
             if (!result.negativists || result.negativists.length === 0) {
+                const d = result.diagnostics || {};
+                const hasFailures = (d.failed_batches || 0) > 0;
+                const diagnosticText = d.input_messages !== undefined
+                    ? `<div style="margin-top:8px; font-size:12px; color:var(--muted);">Проверено сообщений: ${d.input_messages || 0}; чатов с сообщениями: ${d.nonempty_chats || 0}; порций анализа: ${d.successful_batches || 0}/${d.batches || 0}${d.truncated ? '; данные были сокращены' : '; без сокращения данных'}.</div>`
+                    : '';
                 container.innerHTML = `
-                    <div class="alert alert-success">
-                        <strong>Негативщиков не выявлено</strong><br>
-                        <span style="font-size: 13px;">За указанный период не обнаружено пользователей, призывающих к активным действиям.</span>
+                    <div class="alert ${hasFailures ? 'alert-error' : 'alert-success'}">
+                        <strong>${hasFailures ? 'Анализ выполнен не полностью' : 'Значимых негативных авторов не выявлено'}</strong><br>
+                        <span style="font-size: 13px;">${hasFailures ? 'Часть сообщений не удалось проверить — результат нельзя считать полным.' : 'Не обнаружено системных критиков, призывов или организованных действий по заданным критериям.'}</span>
+                        ${result.analysis_notes ? `<div style="margin-top:8px; white-space:pre-wrap;">${escapeHtml(result.analysis_notes)}</div>` : ''}
+                        ${diagnosticText}
                     </div>
                 `;
                 return;
@@ -2255,61 +3751,73 @@
                 <div class="alert alert-success" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                     <div>
                         <strong>Найдено негативщиков: ${result.negativists.length}</strong><br>
-                        <span style="font-size: 13px; color: #666;">
+                        <span style="font-size: 13px; color: var(--muted);">
                             Период: ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
                         </span>
                     </div>
                     <button class="btn btn-small copy-btn" onclick="copyNegativists()">Копировать список</button>
                 </div>
-                <div class="report-section">
-                    <div class="report-header">Список негативщиков</div>
-                    <div style="padding: 15px;">
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <thead>
-                                <tr style="background: #f5f5f5;">
-                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">№</th>
-                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Имя / Ник</th>
-                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Username</th>
-                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Статус / Описание</th>
-                                </tr>
-                            </thead>
-                            <tbody>
+                <div class="negative-list">
             `;
 
             result.negativists.forEach((person, idx) => {
-                const statusClass = person.threat_level === 'high' ? 'color: #c62828;' :
-                                   person.threat_level === 'medium' ? 'color: #ef6c00;' : 'color: #333;';
-                // Generate tags badges
+                const threatClass = person.threat_level === 'high' ? 'high' :
+                                    person.threat_level === 'medium' ? 'medium' : 'low';
+                const riskLabel = person.threat_level === 'high' ? 'высокий риск' :
+                                  person.threat_level === 'medium' ? 'средний риск' : 'наблюдение';
+                const riskBadgeClass = person.threat_level === 'high' ? 'badge-danger' :
+                                       person.threat_level === 'medium' ? 'badge-warning' : 'badge-info';
+                const categoryLabel = person.category === 'organizer' ? 'организатор' :
+                                      person.category === 'activist' ? 'призывает к действиям' : 'системный критик';
                 let tagsBadges = '';
                 if (person.tags && person.tags.length > 0) {
-                    tagsBadges = person.tags.map(tag => {
-                        if (tag === 'СВО') return '<span style="background: #1565c0; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">СВО</span>';
-                        if (tag === 'МНОГОДЕТНЫЕ') return '<span style="background: #7b1fa2; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">МНОГОДЕТНЫЕ</span>';
-                        return `<span style="background: #666; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">${escapeHtml(tag)}</span>`;
-                    }).join('');
+                    tagsBadges = `<div class="tag-list">${person.tags.map(tag => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</div>`;
                 }
+                const evidence = (person.evidence || []).map(item => `
+                    <div style="margin-top: 8px; padding: 9px 11px; background: var(--surface-soft); border-radius: 8px; font-size: 13px; line-height: 1.45;">
+                        <div style="color: var(--muted); margin-bottom: 3px;">${escapeHtml(item.chat_name || '')}${item.date ? ' · ' + escapeHtml(item.date) : ''}${item.message_id ? ' · сообщение ' + escapeHtml(String(item.message_id)) : ''}</div>
+                        <div>«${escapeHtml(item.quote || '')}»</div>
+                    </div>
+                `).join('');
                 html += `
-                    <tr style="border-bottom: 1px solid #eee;">
-                        <td style="padding: 12px; ${statusClass}">${idx + 1}</td>
-                        <td style="padding: 12px; font-weight: 500;">${escapeHtml(person.name || 'Неизвестно')}${tagsBadges}</td>
-                        <td style="padding: 12px; color: #666;">${person.username ? '@' + escapeHtml(person.username) : '—'}</td>
-                        <td style="padding: 12px; ${statusClass}">${escapeHtml(person.status)}</td>
-                    </tr>
+                    <div class="negative-card ${threatClass}">
+                        <div class="negative-card-head">
+                            <div class="negative-index">${idx + 1}</div>
+                            <div style="min-width:0; flex:1;">
+                                <div class="negative-name">${escapeHtml(person.name || 'Неизвестно')}</div>
+                                <div class="negative-username">${person.username ? '@' + escapeHtml(person.username) : 'username не указан'}</div>
+                            </div>
+                            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                                <span class="badge badge-info">${categoryLabel}</span>
+                                <span class="badge ${riskBadgeClass}">${riskLabel}</span>
+                            </div>
+                        </div>
+                        <div class="negative-status">${escapeHtml(person.status)}</div>
+                        ${person.description ? `<div style="margin-top: 10px; line-height: 1.55;">${escapeHtml(person.description)}</div>` : ''}
+                        ${tagsBadges}
+                        ${evidence ? `<div style="margin-top: 12px;"><strong style="font-size:13px;">Основания вывода</strong>${evidence}</div>` : ''}
+                    </div>
                 `;
             });
 
             html += `
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             `;
 
             if (result.analysis_notes) {
                 html += `
-                    <div style="margin-top: 15px; padding: 15px; background: #fafafa; border-radius: 8px; border: 1px solid #e0e0e0;">
+                    <div style="margin-top: 15px; padding: 15px; background: #fff; border-radius: 12px; border: 1px solid var(--border-soft);">
                         <strong>Примечания к анализу:</strong>
                         <p style="margin-top: 10px; white-space: pre-wrap; line-height: 1.6;">${escapeHtml(result.analysis_notes)}</p>
+                    </div>
+                `;
+            }
+
+            if (result.diagnostics) {
+                const d = result.diagnostics;
+                html += `
+                    <div style="margin-top: 12px; color: var(--muted); font-size: 12px;">
+                        Проверено сообщений: ${d.input_messages || 0}; чатов с сообщениями: ${d.nonempty_chats || 0}; порций анализа: ${d.successful_batches || 0}/${d.batches || 0}${d.truncated ? '; данные были сокращены' : '; без сокращения данных'}.
                     </div>
                 `;
             }
@@ -2329,7 +3837,12 @@
                     text += ` [${person.tags.join(', ')}]`;
                 }
                 if (person.username) text += ` (@${person.username})`;
-                text += `\n   Статус: ${person.status}\n\n`;
+                text += `\n   Статус: ${person.status}\n`;
+                if (person.description) text += `   Описание: ${person.description}\n`;
+                (person.evidence || []).forEach(item => {
+                    text += `   Цитата (${item.chat_name || 'чат'}${item.date ? ', ' + item.date : ''}${item.message_id ? ', сообщение ' + item.message_id : ''}): «${item.quote || ''}»\n`;
+                });
+                text += '\n';
             });
 
             if (lastNegativists.analysis_notes) {
@@ -2351,6 +3864,8 @@
 
         // Initial load
         handleVkAuthRedirectResult();
+        loadReportComplexes();
+        loadReportArchiveDoc();
         loadAccounts();
         loadMaxAccounts();
         loadVkAccounts();

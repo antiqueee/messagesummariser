@@ -48,14 +48,24 @@ async def fetch_chat_messages(
                 raise SourceMessageFetchError(source, "У чата Max отсутствует max_account_id")
 
             max_acc = await db.get_max_account(max_account_id)
-            if max_acc:
-                await mm.ensure_connected(max_account_id, max_acc["phone"])
+            if not max_acc:
+                raise SourceMessageFetchError(source, "Max аккаунт чата не найден")
+            if not max_acc.get("is_authorized"):
+                raise SourceMessageFetchError(source, "Max аккаунт чата не авторизован")
+
+            connected = await mm.ensure_connected(max_account_id, max_acc["phone"])
+            if not connected:
+                raise SourceMessageFetchError(
+                    source,
+                    "Max аккаунт временно не подключился. Подождите 10-20 секунд и повторите генерацию; если повторяется постоянно, нужна переавторизация аккаунта Max."
+                )
 
             return await mm.get_messages(
                 account_id=max_account_id,
                 chat_id=chat["telegram_id"],
                 start_date=start_date,
                 end_date=end_date,
+                phone=max_acc["phone"],
             )
 
         if source == "vk":
