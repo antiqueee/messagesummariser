@@ -44,6 +44,11 @@ class NegativistsAnalysisTests(unittest.TestCase):
                 "category": "critic",
                 "status": "Критикует тарифы.",
                 "description": "Несколько раз предметно критиковал начисления.",
+                "phone": "+7 900 000-00-00",
+                "building": "2",
+                "section": None,
+                "floor": None,
+                "apartment": None,
                 "tags": [],
                 "evidence": [{"chat_name": "Чат 1", "date": "27.08", "quote": "Тариф снова неверный"}],
             }]},
@@ -55,6 +60,11 @@ class NegativistsAnalysisTests(unittest.TestCase):
                 "category": "organizer",
                 "status": "Собирает подписи.",
                 "description": "Назначил место и время сбора подписей.",
+                "phone": None,
+                "building": None,
+                "section": "3",
+                "floor": "8",
+                "apartment": "125",
                 "tags": [],
                 "evidence": [{"chat_name": "Чат 2", "date": "27.08", "quote": "Приходите подписать в 19:00"}],
             }]},
@@ -67,6 +77,11 @@ class NegativistsAnalysisTests(unittest.TestCase):
         self.assertEqual(people[0]["category"], "organizer")
         self.assertEqual(len(people[0]["evidence"]), 2)
         self.assertIn("Назначил место", people[0]["description"])
+        self.assertEqual(people[0]["phone"], "+7 900 000-00-00")
+        self.assertEqual(people[0]["building"], "2")
+        self.assertEqual(people[0]["section"], "3")
+        self.assertEqual(people[0]["floor"], "8")
+        self.assertEqual(people[0]["apartment"], "125")
 
     def test_same_display_name_with_different_ids_is_not_merged(self):
         result = {"negativists": [

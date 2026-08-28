@@ -1029,6 +1029,76 @@
             gap: 12px;
         }
 
+        .negativists-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        .negativists-table {
+            width: 100%;
+            min-width: 1180px;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .negativists-table th,
+        .negativists-table td {
+            padding: 11px 12px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            vertical-align: top;
+            line-height: 1.45;
+        }
+
+        .negativists-table th {
+            background: var(--field);
+            font-size: 12px;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        .negativists-table th:nth-child(1) { width: 170px; }
+        .negativists-table th:nth-child(2) { width: 160px; }
+        .negativists-table th:nth-child(3) { width: 130px; }
+        .negativists-table th:nth-child(4) { width: 410px; }
+        .negativists-table th:nth-child(n+5) { width: 78px; }
+
+        .negativists-table th:last-child,
+        .negativists-table td:last-child {
+            border-right: 0;
+        }
+
+        .negativists-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .negativists-name-cell {
+            font-weight: 700;
+        }
+
+        .negativists-account-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .negativists-status-cell {
+            white-space: normal;
+        }
+
+        .negativists-table-evidence {
+            margin-top: 7px;
+            color: var(--text-soft);
+            font-size: 12px;
+        }
+
+        .negativists-table-evidence span {
+            color: var(--muted);
+        }
+
         .negative-card {
             padding: 15px 18px;
             border: 1px solid var(--border-soft);
@@ -3755,18 +3825,28 @@
                             Период: ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
                         </span>
                     </div>
-                    <button class="btn btn-small copy-btn" onclick="copyNegativists()">Копировать список</button>
+                    <button class="btn btn-small copy-btn" onclick="copyNegativists()">Копировать таблицу</button>
                 </div>
-                <div class="negative-list">
+                <div class="negativists-table-wrap">
+                    <table class="negativists-table">
+                        <thead>
+                            <tr>
+                                <th>ФИО</th>
+                                <th>Аккаунт</th>
+                                <th>Телефон</th>
+                                <th>Статус</th>
+                                <th>Корп.</th>
+                                <th>Секц.</th>
+                                <th>Этаж</th>
+                                <th>Кв.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
             `;
 
-            result.negativists.forEach((person, idx) => {
-                const threatClass = person.threat_level === 'high' ? 'high' :
-                                    person.threat_level === 'medium' ? 'medium' : 'low';
+            result.negativists.forEach(person => {
                 const riskLabel = person.threat_level === 'high' ? 'высокий риск' :
                                   person.threat_level === 'medium' ? 'средний риск' : 'наблюдение';
-                const riskBadgeClass = person.threat_level === 'high' ? 'badge-danger' :
-                                       person.threat_level === 'medium' ? 'badge-warning' : 'badge-info';
                 const categoryLabel = person.category === 'organizer' ? 'организатор' :
                                       person.category === 'activist' ? 'призывает к действиям' : 'системный критик';
                 const maxId = String(person.author_id || '').startsWith('max:')
@@ -3786,38 +3866,28 @@
                 const displayName = maxId && String(person.name || '').trim() === maxId
                     ? 'Пользователь MAX'
                     : (person.name || 'Неизвестно');
-                let tagsBadges = '';
-                if (person.tags && person.tags.length > 0) {
-                    tagsBadges = `<div class="tag-list">${person.tags.map(tag => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</div>`;
-                }
-                const evidence = (person.evidence || []).map(item => `
-                    <div style="margin-top: 8px; padding: 9px 11px; background: var(--surface-soft); border-radius: 8px; font-size: 13px; line-height: 1.45;">
-                        <div style="color: var(--muted); margin-bottom: 3px;">${escapeHtml(item.chat_name || '')}${item.date ? ' · ' + escapeHtml(item.date) : ''}${item.message_id ? ' · сообщение ' + escapeHtml(String(item.message_id)) : ''}</div>
-                        <div>«${escapeHtml(item.quote || '')}»</div>
-                    </div>
-                `).join('');
+                const tags = (person.tags || []).length ? ` [${person.tags.join(', ')}]` : '';
+                const statusText = `${categoryLabel}, ${riskLabel}${tags}. ${person.description || person.status || ''}`.trim();
+                const evidence = (person.evidence || []).map(item =>
+                    `<div class="negativists-table-evidence">«${escapeHtml(item.quote || '')}» <span>${escapeHtml(item.chat_name || '')}${item.date ? ' · ' + escapeHtml(item.date) : ''}</span></div>`
+                ).join('');
                 html += `
-                    <div class="negative-card ${threatClass}">
-                        <div class="negative-card-head">
-                            <div class="negative-index">${idx + 1}</div>
-                            <div style="min-width:0; flex:1;">
-                                <div class="negative-name">${escapeHtml(displayName)}</div>
-                                <div class="negative-username">${identityLabel}</div>
-                            </div>
-                            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-                                <span class="badge badge-info">${categoryLabel}</span>
-                                <span class="badge ${riskBadgeClass}">${riskLabel}</span>
-                            </div>
-                        </div>
-                        <div class="negative-status">${escapeHtml(person.status)}</div>
-                        ${person.description ? `<div style="margin-top: 10px; line-height: 1.55;">${escapeHtml(person.description)}</div>` : ''}
-                        ${tagsBadges}
-                        ${evidence ? `<div style="margin-top: 12px;"><strong style="font-size:13px;">Основания вывода</strong>${evidence}</div>` : ''}
-                    </div>
+                    <tr>
+                        <td class="negativists-name-cell">${escapeHtml(displayName)}</td>
+                        <td class="negativists-account-cell">${identityLabel}</td>
+                        <td>${escapeHtml(person.phone || '')}</td>
+                        <td class="negativists-status-cell">${escapeHtml(statusText)}${evidence}</td>
+                        <td>${escapeHtml(person.building || '')}</td>
+                        <td>${escapeHtml(person.section || '')}</td>
+                        <td>${escapeHtml(person.floor || '')}</td>
+                        <td>${escapeHtml(person.apartment || '')}</td>
+                    </tr>
                 `;
             });
 
             html += `
+                        </tbody>
+                    </table>
                 </div>
             `;
 
@@ -3844,38 +3914,38 @@
 
         function copyNegativists() {
             if (!lastNegativists || !lastNegativists.negativists) return;
-
-            let text = 'СПИСОК НЕГАТИВЩИКОВ\n';
-            text += '==================\n\n';
-
-            lastNegativists.negativists.forEach((person, idx) => {
-                text += `${idx + 1}. ${person.name || 'Неизвестно'}`;
-                if (person.tags && person.tags.length > 0) {
-                    text += ` [${person.tags.join(', ')}]`;
-                }
-                if (person.username) text += ` (@${person.username})`;
-                text += `\n   Статус: ${person.status}\n`;
-                if (person.description) text += `   Описание: ${person.description}\n`;
-                (person.evidence || []).forEach(item => {
-                    text += `   Цитата (${item.chat_name || 'чат'}${item.date ? ', ' + item.date : ''}${item.message_id ? ', сообщение ' + item.message_id : ''}): «${item.quote || ''}»\n`;
-                });
-                text += '\n';
+            const cleanCell = value => String(value || '').replace(/[\t\r\n]+/g, ' ').trim();
+            const headers = ['ФИО', 'Аккаунт', 'Телефон', 'Статус', 'Корп.', 'Секц.', 'Этаж', 'Кв.'];
+            const rows = lastNegativists.negativists.map(person => {
+                const authorId = String(person.author_id || '');
+                const maxId = authorId.startsWith('max:') ? authorId.slice(4) : '';
+                const telegramId = authorId.startsWith('telegram:') ? authorId.slice(9) : '';
+                const account = person.username ? `@${String(person.username).replace(/^@/, '')}` :
+                    maxId ? `MAX ID: ${maxId}` : telegramId ? `Telegram ID: ${telegramId}` : '';
+                const displayName = maxId && String(person.name || '').trim() === maxId
+                    ? 'Пользователь MAX' : (person.name || 'Неизвестно');
+                const category = person.category === 'organizer' ? 'организатор' :
+                    person.category === 'activist' ? 'призывает к действиям' : 'системный критик';
+                const risk = person.threat_level === 'high' ? 'высокий риск' :
+                    person.threat_level === 'medium' ? 'средний риск' : 'наблюдение';
+                const tags = (person.tags || []).length ? ` [${person.tags.join(', ')}]` : '';
+                const quotes = (person.evidence || []).map(item => `«${item.quote || ''}»`).join(' ');
+                const status = `${category}, ${risk}${tags}. ${person.description || person.status || ''} ${quotes}`;
+                return [displayName, account, person.phone, status, person.building,
+                        person.section, person.floor, person.apartment].map(cleanCell);
             });
+            const text = [headers, ...rows].map(row => row.join('\t')).join('\n');
 
-            if (lastNegativists.analysis_notes) {
-                text += '\nПримечания:\n' + lastNegativists.analysis_notes;
-            }
-
-            navigator.clipboard.writeText(text.trim()).then(() => {
-                alert('Список скопирован в буфер обмена!');
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Таблица скопирована. Вставьте её в Google Sheets или Excel.');
             }).catch(() => {
                 const textarea = document.createElement('textarea');
-                textarea.value = text.trim();
+                textarea.value = text;
                 document.body.appendChild(textarea);
                 textarea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
-                alert('Список скопирован!');
+                alert('Таблица скопирована!');
             });
         }
 
