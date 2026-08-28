@@ -35,15 +35,20 @@ class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
             )],
             username=None,
             link="ivan_petrov",
-            base_url="https://i.oneme.ru/avatar.jpg",
-            base_raw_url=None,
+            base_url="https://i.oneme.ru/avatar-small.jpg",
+            base_raw_url="https://i.oneme.ru/avatar-full.jpg",
         )
 
         profile = MaxClientManager._max_user_to_profile(user, 74481502)
 
         self.assertEqual(profile["display_name"], "Иван Петров")
         self.assertEqual(profile["username"], "ivan_petrov")
-        self.assertEqual(profile["avatar_url"], "https://i.oneme.ru/avatar.jpg")
+        self.assertEqual(profile["avatar_url"], "https://i.oneme.ru/avatar-small.jpg")
+        self.assertEqual(profile["photos"], [{
+            "thumbnail_url": "https://i.oneme.ru/avatar-small.jpg",
+            "full_url": "https://i.oneme.ru/avatar-full.jpg",
+            "label": "Текущая фотография профиля",
+        }])
         self.assertEqual(profile["profile_link"], "max://user/74481502")
         self.assertEqual(profile["public_link"], "https://max.ru/ivan_petrov")
 

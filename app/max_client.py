@@ -254,16 +254,25 @@ class MaxClientManager:
     @classmethod
     def _max_user_to_profile(cls, user, user_id: int) -> dict:
         username = cls._get_max_user_username(user)
-        avatar_url = (
-            getattr(user, 'base_url', None)
-            or getattr(user, 'base_raw_url', None)
-            or getattr(user, 'photo_url', None)
+        thumbnail_url = getattr(user, 'base_url', None) or getattr(user, 'photo_url', None)
+        full_url = (
+            getattr(user, 'base_raw_url', None)
+            or getattr(user, 'full_avatar_url', None)
+            or thumbnail_url
         )
+        photos = []
+        if thumbnail_url or full_url:
+            photos.append({
+                'thumbnail_url': str(thumbnail_url or full_url),
+                'full_url': str(full_url or thumbnail_url),
+                'label': 'Текущая фотография профиля',
+            })
         return {
             'user_id': int(getattr(user, 'id', None) or user_id),
             'display_name': cls._get_max_user_display_name(user) or f'Пользователь MAX {user_id}',
             'username': username,
-            'avatar_url': str(avatar_url) if avatar_url else None,
+            'avatar_url': str(thumbnail_url or full_url) if (thumbnail_url or full_url) else None,
+            'photos': photos,
             'profile_link': f'max://user/{user_id}',
             'public_link': f'https://max.ru/{username}' if username else None,
         }
