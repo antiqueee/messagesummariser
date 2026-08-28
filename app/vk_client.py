@@ -76,15 +76,32 @@ class VkClientManager:
         async with httpx.AsyncClient(timeout=30.0) as client:
             last_msg = None
             for attempt in range(5):
-                response = await client.get(
-                    f"{VK_API_URL}/{method}",
-                    params={
-                        **params,
-                        "access_token": access_token,
-                        "v": VK_API_VERSION,
-                    },
-                )
-                response.raise_for_status()
+                try:
+                    response = await client.get(
+                        f"{VK_API_URL}/{method}",
+                        params={
+                            **params,
+                            "access_token": access_token,
+                            "v": VK_API_VERSION,
+                        },
+                    )
+                    if response.status_code >= 500 and attempt < 4:
+                        delay = 0.5 * (attempt + 1)
+                        print(
+                            f"[VK] HTTP {response.status_code} on {method}, retrying in {delay:.1f}s",
+                            flush=True,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    response.raise_for_status()
+                except httpx.RequestError as e:
+                    last_msg = f"{type(e).__name__}: {str(e) or 'network request failed'}"
+                    if attempt == 4:
+                        raise RuntimeError(f"VK API {method} network error: {last_msg}") from e
+                    delay = 0.5 * (attempt + 1)
+                    print(f"[VK] {last_msg} on {method}, retrying in {delay:.1f}s", flush=True)
+                    await asyncio.sleep(delay)
+                    continue
                 payload = response.json()
                 if "error" not in payload:
                     return payload["response"]
@@ -165,6 +182,7 @@ class VkClientManager:
         messages: list[dict] = []
         offset = 0
         sender_cache: dict[int, str] = {}
+        reached_start = False
 
         while len(messages) < limit:
             response = await self.api_call(
@@ -173,7 +191,7 @@ class VkClientManager:
                 peer_id=peer_id,
                 offset=offset,
                 count=min(200, limit - len(messages)),
-                rev=1,
+                rev=0,
                 extended=1,
             )
 
@@ -187,7 +205,8 @@ class VkClientManager:
             for item in items:
                 msg_ts = int(item.get("date", 0))
                 if msg_ts < start_ts:
-                    continue
+                    reached_start = True
+                    break
                 if msg_ts > end_ts:
                     continue
 
@@ -212,9 +231,10 @@ class VkClientManager:
                     break
 
             offset += len(items)
-            if len(items) < 200:
+            if reached_start or len(items) < 200:
                 break
 
+        messages.sort(key=lambda item: item["date"])
         return messages
 
     def token_expiry_iso(self, expires_in: Optional[int]) -> Optional[str]:
