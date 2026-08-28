@@ -1099,6 +1099,108 @@
             color: var(--muted);
         }
 
+        .max-lookup-section {
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        .max-lookup-form {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .max-lookup-form input {
+            flex: 1;
+            min-width: 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+        }
+
+        .max-lookup-loading {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 18px;
+            padding: 16px;
+            color: var(--text-soft);
+            background: var(--field);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .max-lookup-loading .spinner {
+            width: 26px;
+            height: 26px;
+            margin: 0;
+        }
+
+        .max-profile-card {
+            display: grid;
+            grid-template-columns: 92px minmax(0, 1fr);
+            gap: 18px;
+            margin-top: 18px;
+            padding: 20px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+        }
+
+        .max-profile-avatar,
+        .max-profile-avatar-fallback {
+            width: 92px;
+            height: 92px;
+            border-radius: 50%;
+        }
+
+        .max-profile-avatar {
+            display: block;
+            object-fit: cover;
+            background: var(--field);
+        }
+
+        .max-profile-avatar-fallback {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--brand);
+            background: var(--brand-tint);
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .max-profile-name {
+            margin-bottom: 4px;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .max-profile-row {
+            margin-top: 7px;
+            color: var(--text-soft);
+        }
+
+        .max-profile-row strong {
+            color: var(--text);
+        }
+
+        .max-profile-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        @media (max-width: 640px) {
+            .max-lookup-form {
+                flex-direction: column;
+            }
+
+            .max-profile-card {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .negative-card {
             padding: 15px 18px;
             border: 1px solid var(--border-soft);
@@ -1271,6 +1373,7 @@
             <button class="tab-btn" data-tab="accounts">Аккаунты</button>
             <button class="tab-btn" data-tab="complexes">ЖК (Объекты)</button>
             <button class="tab-btn" data-tab="negativists">Негативщики</button>
+            <button class="tab-btn" data-tab="max-lookup">Поиск MAX</button>
         </div>
 
         <!-- Accounts Panel -->
@@ -1481,6 +1584,27 @@
             </div>
 
             <div id="negativists-result"></div>
+        </div>
+
+        <!-- Max User Lookup Panel -->
+        <div id="max-lookup-panel" class="panel">
+            <div class="section max-lookup-section">
+                <h2 class="section-title">Поиск пользователя MAX</h2>
+                <p style="color: var(--text-soft); margin-bottom: 18px;">
+                    Введите числовой MAX ID. Сервис попробует получить профиль через доступные авторизованные аккаунты.
+                </p>
+                <div class="max-lookup-form">
+                    <input type="text" inputmode="numeric" id="max-lookup-user-id"
+                           placeholder="Например: 74481502"
+                           onkeydown="if(event.key === 'Enter'){event.preventDefault();lookupMaxUser();}">
+                    <button class="btn btn-success" id="max-lookup-btn" onclick="lookupMaxUser()">Найти пользователя</button>
+                </div>
+                <div id="max-lookup-loading" class="max-lookup-loading" style="display:none;">
+                    <div class="spinner"></div>
+                    <span>Запрашиваю профиль в MAX...</span>
+                </div>
+                <div id="max-lookup-result"></div>
+            </div>
         </div>
     </div>
 
@@ -3946,6 +4070,68 @@
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
                 alert('Таблица скопирована!');
+            });
+        }
+
+        let lastMaxLookup = null;
+
+        async function lookupMaxUser() {
+            const input = document.getElementById('max-lookup-user-id');
+            const button = document.getElementById('max-lookup-btn');
+            const loading = document.getElementById('max-lookup-loading');
+            const result = document.getElementById('max-lookup-result');
+            const rawId = input.value.trim();
+            if (!/^\d+$/.test(rawId) || Number(rawId) <= 0) {
+                result.innerHTML = '<div class="alert alert-error" style="margin-top:18px;">Введите корректный числовой MAX ID.</div>';
+                return;
+            }
+
+            button.disabled = true;
+            loading.style.display = 'flex';
+            result.innerHTML = '';
+            try {
+                const profile = await api(`/api/max/users/${encodeURIComponent(rawId)}`);
+                lastMaxLookup = profile;
+                const initials = escapeHtml(initialsFromName(profile.display_name));
+                const avatar = profile.avatar_url ? `
+                    <div>
+                        <img class="max-profile-avatar" src="${escapeHtml(profile.avatar_url)}" alt=""
+                             onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                        <div class="max-profile-avatar-fallback" style="display:none;">${initials}</div>
+                    </div>
+                ` : `<div class="max-profile-avatar-fallback">${initials}</div>`;
+                const username = profile.username
+                    ? `<a href="${escapeHtml(profile.public_link || '#')}" target="_blank" rel="noopener">@${escapeHtml(profile.username)}</a>`
+                    : '<span style="color:var(--muted);">не указан</span>';
+                result.innerHTML = `
+                    <div class="max-profile-card">
+                        ${avatar}
+                        <div>
+                            <div class="max-profile-name">${escapeHtml(profile.display_name || 'Пользователь MAX')}</div>
+                            <div class="max-profile-row"><strong>MAX ID:</strong> ${escapeHtml(String(profile.user_id))}</div>
+                            <div class="max-profile-row"><strong>Никнейм:</strong> ${username}</div>
+                            <div class="max-profile-row"><strong>Профиль получен через:</strong> ${escapeHtml(profile.resolved_via_account_name || 'MAX')}</div>
+                            <div class="max-profile-actions">
+                                <a class="btn btn-success" href="${escapeHtml(profile.profile_link)}">Открыть в MAX</a>
+                                <button class="btn btn-secondary" onclick="copyMaxProfileLink()">Копировать ссылку</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (e) {
+                lastMaxLookup = null;
+                result.innerHTML = `<div class="alert alert-error" style="margin-top:18px;"><strong>Профиль не найден</strong><br>${escapeHtml(e.message)}</div>`;
+            } finally {
+                button.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+
+        function copyMaxProfileLink() {
+            if (!lastMaxLookup) return;
+            const text = `${lastMaxLookup.display_name || 'Пользователь MAX'}\nMAX ID: ${lastMaxLookup.user_id}\n${lastMaxLookup.username ? '@' + lastMaxLookup.username + '\n' : ''}${lastMaxLookup.profile_link}`;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Данные профиля скопированы!');
             });
         }
 

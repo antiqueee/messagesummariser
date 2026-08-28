@@ -1470,6 +1470,58 @@ async def get_max_accounts():
     return {"accounts": accounts}
 
 
+@app.get("/api/max/users/{user_id}")
+async def lookup_max_user(user_id: int):
+    """Resolve a Max user ID through any available authorized account."""
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="MAX ID должен быть положительным числом")
+
+    accounts = [
+        account for account in await db.get_max_accounts()
+        if account.get('is_authorized')
+    ]
+    if not accounts:
+        raise HTTPException(status_code=400, detail="Нет авторизованных MAX-аккаунтов для поиска")
+
+    mm = get_max_manager()
+    connected_accounts = []
+    disconnected_accounts = []
+    for account in accounts:
+        if await mm.check_connected(account['id']):
+            connected_accounts.append(account)
+        else:
+            disconnected_accounts.append(account)
+    ordered_accounts = sorted(
+        connected_accounts,
+        key=lambda account: bool(account.get('is_send_only')),
+    ) + sorted(
+        disconnected_accounts,
+        key=lambda account: bool(account.get('is_send_only')),
+    )
+
+    errors = []
+    for account in ordered_accounts:
+        try:
+            connected = await mm.ensure_connected(account['id'], account['phone'])
+            if not connected:
+                errors.append(f"{account['name']}: не подключился")
+                continue
+            profile = await mm.get_user_profile(account['id'], user_id)
+            if profile:
+                return {
+                    **profile,
+                    'resolved_via_account_id': account['id'],
+                    'resolved_via_account_name': account['name'],
+                }
+        except Exception as e:
+            errors.append(f"{account['name']}: {type(e).__name__}: {str(e) or 'ошибка MAX API'}")
+
+    detail = f"Пользователь MAX с ID {user_id} не найден или его профиль недоступен"
+    if errors:
+        detail += ". " + "; ".join(errors)
+    raise HTTPException(status_code=404, detail=detail)
+
+
 @app.post("/api/max/accounts")
 async def create_max_account(data: MaxAccountCreateRequest):
     """Create a new Max messenger account"""

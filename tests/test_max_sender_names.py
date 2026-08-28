@@ -24,6 +24,29 @@ class FakeMaxClient:
 
 
 class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
+    def test_user_profile_contains_identity_avatar_and_deep_link(self):
+        user = SimpleNamespace(
+            id=74481502,
+            names=[SimpleNamespace(
+                type="ONEME",
+                name="Иван Петров",
+                first_name=None,
+                last_name=None,
+            )],
+            username=None,
+            link="ivan_petrov",
+            base_url="https://i.oneme.ru/avatar.jpg",
+            base_raw_url=None,
+        )
+
+        profile = MaxClientManager._max_user_to_profile(user, 74481502)
+
+        self.assertEqual(profile["display_name"], "Иван Петров")
+        self.assertEqual(profile["username"], "ivan_petrov")
+        self.assertEqual(profile["avatar_url"], "https://i.oneme.ru/avatar.jpg")
+        self.assertEqual(profile["profile_link"], "max://user/74481502")
+        self.assertEqual(profile["public_link"], "https://max.ru/ivan_petrov")
+
     async def test_numeric_sender_is_replaced_with_profile_name(self):
         manager = MaxClientManager()
         client = FakeMaxClient()

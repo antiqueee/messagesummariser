@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -229,6 +230,53 @@ class MaxClientManager:
             if full_name:
                 return full_name
         return None
+
+    @staticmethod
+    def _get_max_user_username(user) -> Optional[str]:
+        """Extract a username from the fields exposed by different pymax versions."""
+        candidates = [getattr(user, 'username', None), getattr(user, 'link', None)]
+        for item in getattr(user, 'names', None) or []:
+            name_type = str(getattr(item, 'type', '') or '').upper()
+            if name_type in {'USERNAME', 'NICKNAME', 'LINK'}:
+                candidates.append(getattr(item, 'name', None))
+
+        for raw_value in candidates:
+            value = str(raw_value or '').strip()
+            if not value:
+                continue
+            value = value.removeprefix('@')
+            if 'max.ru/' in value:
+                value = value.split('max.ru/', 1)[1].split('?', 1)[0].strip('/')
+            if re.fullmatch(r'[A-Za-z0-9_.-]{3,64}', value) and not value.isdigit():
+                return value
+        return None
+
+    @classmethod
+    def _max_user_to_profile(cls, user, user_id: int) -> dict:
+        username = cls._get_max_user_username(user)
+        avatar_url = (
+            getattr(user, 'base_url', None)
+            or getattr(user, 'base_raw_url', None)
+            or getattr(user, 'photo_url', None)
+        )
+        return {
+            'user_id': int(getattr(user, 'id', None) or user_id),
+            'display_name': cls._get_max_user_display_name(user) or f'Пользователь MAX {user_id}',
+            'username': username,
+            'avatar_url': str(avatar_url) if avatar_url else None,
+            'profile_link': f'max://user/{user_id}',
+            'public_link': f'https://max.ru/{username}' if username else None,
+        }
+
+    async def get_user_profile(self, account_id: int, user_id: int) -> Optional[dict]:
+        """Resolve one Max user through an already connected account."""
+        client = self._clients.get(account_id)
+        if not client or not self._is_socket_connected(account_id):
+            return None
+        user = await client.get_user(user_id)
+        if not user:
+            return None
+        return self._max_user_to_profile(user, user_id)
 
     async def _resolve_message_sender_names(self, client, messages: list[dict]) -> None:
         """Replace numeric Max sender labels with names fetched from user profiles."""
