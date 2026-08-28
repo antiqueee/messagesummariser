@@ -3772,11 +3772,17 @@
                 const maxId = String(person.author_id || '').startsWith('max:')
                     ? String(person.author_id).slice(4)
                     : '';
-                const identityLabel = person.username
-                    ? '@' + escapeHtml(person.username)
+                const telegramId = String(person.author_id || '').startsWith('telegram:')
+                    ? String(person.author_id).slice(9)
+                    : '';
+                const telegramUsername = String(person.username || '').replace(/^@/, '').trim();
+                const identityLabel = telegramUsername
+                    ? `<a href="https://t.me/${encodeURIComponent(telegramUsername)}" target="_blank" rel="noopener" style="color:inherit;">@${escapeHtml(telegramUsername)}</a>`
                     : maxId
                         ? 'MAX ID: ' + escapeHtml(maxId)
-                        : 'username не указан';
+                        : telegramId
+                            ? 'Telegram ID: ' + escapeHtml(telegramId)
+                            : 'username не указан';
                 const displayName = maxId && String(person.name || '').trim() === maxId
                     ? 'Пользователь MAX'
                     : (person.name || 'Неизвестно');

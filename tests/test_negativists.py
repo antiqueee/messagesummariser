@@ -78,6 +78,27 @@ class NegativistsAnalysisTests(unittest.TestCase):
 
         self.assertEqual(len(people), 2)
 
+    def test_messenger_profile_overrides_model_identity(self):
+        chats = [{
+            "source": "telegram",
+            "messages": [{
+                "sender_id": 12345,
+                "sender_name": "Анна Смирнова",
+                "sender_username": "anna_home",
+            }],
+        }]
+        people = [{
+            "author_id": "telegram:12345",
+            "name": "Ошибочное имя AI",
+            "username": None,
+        }]
+
+        profiles = self.summarizer._build_author_profiles(chats)
+        self.summarizer._apply_author_profiles(people, profiles)
+
+        self.assertEqual(people[0]["name"], "Анна Смирнова")
+        self.assertEqual(people[0]["username"], "anna_home")
+
 
 class NegativistsAsyncAnalysisTests(unittest.IsolatedAsyncioTestCase):
     async def test_analysis_processes_every_batch_and_reports_diagnostics(self):

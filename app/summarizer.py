@@ -390,18 +390,23 @@ class ChatSummarizer:
         return "\n".join(formatted)
 
     @staticmethod
-    def _format_negativist_message(message: dict, source: str) -> str:
-        """Format an auditable message line with a stable author identity."""
-        date_str = str(message.get('date') or '')[:16].replace('T', ' ')
+    def _get_message_author_id(message: dict, source: str) -> str:
         sender = str(message.get('sender_name') or 'Unknown')
         sender_id = message.get('sender_id')
         username = str(message.get('sender_username') or '').lstrip('@').strip()
         if sender_id not in (None, '', 0, '0'):
-            author_id = f"{source}:{sender_id}"
-        elif username:
-            author_id = f"{source}:username:{username.lower()}"
-        else:
-            author_id = f"{source}:name:{sender.casefold()}"
+            return f"{source}:{sender_id}"
+        if username:
+            return f"{source}:username:{username.lower()}"
+        return f"{source}:name:{sender.casefold()}"
+
+    @classmethod
+    def _format_negativist_message(cls, message: dict, source: str) -> str:
+        """Format an auditable message line with a stable author identity."""
+        date_str = str(message.get('date') or '')[:16].replace('T', ' ')
+        sender = str(message.get('sender_name') or 'Unknown')
+        username = str(message.get('sender_username') or '').lstrip('@').strip()
+        author_id = cls._get_message_author_id(message, source)
         username_part = f"; username=@{username}" if username else ""
         message_id = message.get('message_id') or message.get('id') or ''
         text = str(message.get('text') or '').replace('\x00', '').strip()
@@ -409,6 +414,37 @@ class ChatSummarizer:
             f"[{date_str}] [message_id={message_id}] [author_id={author_id}{username_part}] "
             f"{sender}: {text}"
         )
+
+    @classmethod
+    def _build_author_profiles(cls, chats_with_messages: list[dict]) -> dict[str, dict]:
+        """Build authoritative identities from messenger data, not model output."""
+        profiles: dict[str, dict] = {}
+        for chat_info in chats_with_messages:
+            source = str(chat_info.get('source') or 'telegram')
+            for message in chat_info.get('messages') or []:
+                author_id = cls._get_message_author_id(message, source)
+                name = str(message.get('sender_name') or '').strip()
+                username = str(message.get('sender_username') or '').lstrip('@').strip()
+                profile = profiles.setdefault(author_id, {
+                    "name": None,
+                    "username": None,
+                })
+                if name and name not in {'Unknown', str(message.get('sender_id') or '')}:
+                    profile['name'] = name
+                if username:
+                    profile['username'] = username
+        return profiles
+
+    @staticmethod
+    def _apply_author_profiles(people: list[dict], profiles: dict[str, dict]) -> None:
+        for person in people:
+            profile = profiles.get(str(person.get('author_id') or ''))
+            if not profile:
+                continue
+            if profile.get('name'):
+                person['name'] = profile['name']
+            if profile.get('username'):
+                person['username'] = profile['username']
 
     def _build_negativist_batches(
             self,
@@ -913,6 +949,7 @@ class ChatSummarizer:
     ) -> dict:
         """Analyze every message in bounded batches and merge people by author ID."""
         batches, diagnostics = self._build_negativist_batches(chats_with_messages)
+        author_profiles = self._build_author_profiles(chats_with_messages)
         if diagnostics['input_messages'] == 0:
             return {
                 "negativists": [],
@@ -948,8 +985,10 @@ class ChatSummarizer:
             notes.append(
                 "Анализ частичный: не обработано порций данных — " + "; ".join(errors)
             )
+        people = self._merge_negativists(batch_results)
+        self._apply_author_profiles(people, author_profiles)
         return {
-            "negativists": self._merge_negativists(batch_results),
+            "negativists": people,
             "analysis_notes": "\n".join(notes) or None,
             "diagnostics": diagnostics,
         }
