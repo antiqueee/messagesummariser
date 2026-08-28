@@ -210,6 +210,68 @@ class MaxClientManager:
             '_sort_ts': msg_date.timestamp() if msg_date else 0,
         }
 
+    @staticmethod
+    def _get_max_user_display_name(user) -> Optional[str]:
+        """Extract the most useful display name from a pymax User/Contact."""
+        names = getattr(user, 'names', None) or []
+        ordered_names = sorted(
+            names,
+            key=lambda item: str(getattr(item, 'type', '') or '').upper() != 'ONEME',
+        )
+        for item in ordered_names:
+            display_name = str(getattr(item, 'name', '') or '').strip()
+            if display_name:
+                return display_name
+            full_name = ' '.join(filter(None, [
+                str(getattr(item, 'first_name', '') or '').strip(),
+                str(getattr(item, 'last_name', '') or '').strip(),
+            ])).strip()
+            if full_name:
+                return full_name
+        return None
+
+    async def _resolve_message_sender_names(self, client, messages: list[dict]) -> None:
+        """Replace numeric Max sender labels with names fetched from user profiles."""
+        unresolved_ids = sorted({
+            int(message['sender_id'])
+            for message in messages
+            if isinstance(message.get('sender_id'), int)
+            and message['sender_id'] > 0
+            and message.get('sender_name') in {
+                str(message['sender_id']),
+                'Unknown',
+            }
+        })
+        if not unresolved_ids:
+            return
+
+        resolved: dict[int, str] = {}
+        for offset in range(0, len(unresolved_ids), 100):
+            chunk = unresolved_ids[offset:offset + 100]
+            try:
+                users = await client.get_users(chunk)
+            except Exception as e:
+                print(
+                    f"[MaxClient] Could not resolve {len(chunk)} sender profiles: {e}",
+                    flush=True,
+                )
+                continue
+            for user in users or []:
+                user_id = getattr(user, 'id', None)
+                display_name = self._get_max_user_display_name(user)
+                if isinstance(user_id, int) and display_name:
+                    resolved[user_id] = display_name
+
+        for message in messages:
+            display_name = resolved.get(message.get('sender_id'))
+            if display_name:
+                message['sender_name'] = display_name
+
+        print(
+            f"[MaxClient] Resolved sender names: {len(resolved)}/{len(unresolved_ids)}",
+            flush=True,
+        )
+
     def _get_dialog_title(self, dialog) -> str:
         dialog_id = int(getattr(dialog, 'id', 0))
         dialog_type = str(getattr(dialog, 'type', 'dialog'))
@@ -618,6 +680,7 @@ class MaxClientManager:
             traceback.print_exc()
             raise RuntimeError(f"Failed to fetch Max messages for chat {chat_id}: {e}") from e
 
+        await self._resolve_message_sender_names(client, messages)
         messages.sort(key=lambda item: item['date'])
         return messages[:limit]
 

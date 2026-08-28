@@ -3769,6 +3769,17 @@
                                        person.threat_level === 'medium' ? 'badge-warning' : 'badge-info';
                 const categoryLabel = person.category === 'organizer' ? 'организатор' :
                                       person.category === 'activist' ? 'призывает к действиям' : 'системный критик';
+                const maxId = String(person.author_id || '').startsWith('max:')
+                    ? String(person.author_id).slice(4)
+                    : '';
+                const identityLabel = person.username
+                    ? '@' + escapeHtml(person.username)
+                    : maxId
+                        ? 'MAX ID: ' + escapeHtml(maxId)
+                        : 'username не указан';
+                const displayName = maxId && String(person.name || '').trim() === maxId
+                    ? 'Пользователь MAX'
+                    : (person.name || 'Неизвестно');
                 let tagsBadges = '';
                 if (person.tags && person.tags.length > 0) {
                     tagsBadges = `<div class="tag-list">${person.tags.map(tag => `<span class="tag-pill">${escapeHtml(tag)}</span>`).join('')}</div>`;
@@ -3784,8 +3795,8 @@
                         <div class="negative-card-head">
                             <div class="negative-index">${idx + 1}</div>
                             <div style="min-width:0; flex:1;">
-                                <div class="negative-name">${escapeHtml(person.name || 'Неизвестно')}</div>
-                                <div class="negative-username">${person.username ? '@' + escapeHtml(person.username) : 'username не указан'}</div>
+                                <div class="negative-name">${escapeHtml(displayName)}</div>
+                                <div class="negative-username">${identityLabel}</div>
                             </div>
                             <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
                                 <span class="badge badge-info">${categoryLabel}</span>
