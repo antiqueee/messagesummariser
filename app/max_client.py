@@ -22,6 +22,7 @@ class MaxClientManager:
         self._ready: dict[int, asyncio.Event] = {}  # signals when client is connected
         self._phones: dict[int, str] = {}
         self._auth_tokens: dict[int, str] = {}
+        self._password_challenges: dict[int, dict] = {}
         self._patch_pymax_socket_unpacker()
         self._patch_pymax_contact_attach_parser()
 
@@ -404,18 +405,15 @@ class MaxClientManager:
     async def start_auth(self, account_id: int, phone: str, force_code: bool = False) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
+            # A code-request client has no background task, so checking only
+            # _tasks leaks its socket and SQLite engine on every repeated click.
+            if account_id in self._tasks or account_id in self._clients:
+                await self._disconnect_account_unlocked(account_id)
             self._phones[account_id] = phone
-
-            # Stop existing client if any
-            if account_id in self._tasks:
-                self._tasks[account_id].cancel()
-                try:
-                    await self._tasks[account_id]
-                except (asyncio.CancelledError, Exception):
-                    pass
 
             if force_code:
                 self._auth_tokens.pop(account_id, None)
+                self._password_challenges.pop(account_id, None)
                 session_db = Path(self._get_work_dir(account_id)) / "session.db"
                 if session_db.exists():
                     session_db.unlink()
@@ -492,7 +490,12 @@ class MaxClientManager:
                 traceback.print_exc()
                 raise RuntimeError(f"Ошибка авторизации Max: {e}")
 
-    async def complete_auth_code(self, account_id: int, code: str) -> dict:
+    async def complete_auth_code(
+            self,
+            account_id: int,
+            code: str,
+            password: Optional[str] = None,
+    ) -> dict:
         """Complete Max SMS-code auth and start the saved session."""
         code = (code or "").strip()
         if len(code) != 6 or not code.isdigit():
@@ -506,8 +509,47 @@ class MaxClientManager:
                 raise RuntimeError("Сначала нажмите 'Авторизовать', чтобы запросить код Max")
 
             try:
-                await asyncio.wait_for(client.login_with_code(temp_token, code, start=False), timeout=30.0)
+                challenge = self._password_challenges.get(account_id)
+                if challenge:
+                    if not password:
+                        return {
+                            "status": "password_required",
+                            "message": "Введите пароль двухфакторной аутентификации Max.",
+                            "password_hint": challenge.get("hint"),
+                        }
+                    token_attrs = await asyncio.wait_for(
+                        client._check_password(password, challenge["trackId"]),
+                        timeout=30.0,
+                    )
+                    token = (token_attrs or {}).get("LOGIN", {}).get("token")
+                    if not token:
+                        raise RuntimeError("Неверный пароль двухфакторной аутентификации Max")
+                else:
+                    response = await asyncio.wait_for(
+                        client._send_code(code, temp_token),
+                        timeout=30.0,
+                    )
+                    login_attrs = response.get("tokenAttrs", {}).get("LOGIN", {})
+                    challenge = response.get("passwordChallenge")
+                    token = login_attrs.get("token")
+                    if challenge and not token:
+                        self._password_challenges[account_id] = challenge
+                        hint = challenge.get("hint")
+                        message = "Код принят. Введите пароль двухфакторной аутентификации Max."
+                        if hint:
+                            message += f" Подсказка: {hint}"
+                        return {
+                            "status": "password_required",
+                            "message": message,
+                            "password_hint": hint,
+                        }
+                    if not token:
+                        raise RuntimeError("Max не вернул токен авторизации")
+
+                client._token = token
+                client._database.update_auth_token(client._device_id, token)
                 self._auth_tokens.pop(account_id, None)
+                self._password_challenges.pop(account_id, None)
             except Exception as e:
                 raise RuntimeError(f"Не удалось подтвердить код Max: {e}") from e
 
@@ -898,36 +940,45 @@ class MaxClientManager:
             item.pop('_sort_ts', None)
         return trimmed
 
-    async def disconnect_account(self, account_id: int):
-        """Disconnect Max client for account"""
-        async with self._get_lock(account_id):
-            if account_id in self._tasks:
-                self._tasks[account_id].cancel()
-                try:
-                    await self._tasks[account_id]
-                except (asyncio.CancelledError, Exception):
-                    pass
-                del self._tasks[account_id]
+    async def _disconnect_account_unlocked(self, account_id: int) -> None:
+        """Disconnect one client. Caller must serialize access when needed."""
+        task = self._tasks.pop(account_id, None)
+        if task:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
 
-            if account_id in self._clients:
-                client = self._clients.pop(account_id)
+        client = self._clients.pop(account_id, None)
+        if client:
+            try:
+                if hasattr(client, 'close'):
+                    await asyncio.wait_for(client.close(), timeout=3.0)
+                elif hasattr(client, 'disconnect'):
+                    await asyncio.wait_for(client.disconnect(), timeout=3.0)
+                if hasattr(client, '_cleanup_client'):
+                    await asyncio.wait_for(client._cleanup_client(), timeout=5.0)
+            except Exception:
+                pass
+
+            database = getattr(client, '_database', None)
+            engine = getattr(database, 'engine', None)
+            if engine:
                 try:
-                    if hasattr(client, 'close'):
-                        await client.close()
-                    elif hasattr(client, 'disconnect'):
-                        await client.disconnect()
-                    if hasattr(client, '_cleanup_client'):
-                        await client._cleanup_client()
+                    engine.dispose()
                 except Exception:
                     pass
 
-            if account_id in self._ready:
-                del self._ready[account_id]
+        self._ready.pop(account_id, None)
+        self._phones.pop(account_id, None)
+        self._auth_tokens.pop(account_id, None)
+        self._password_challenges.pop(account_id, None)
 
-            if account_id in self._phones:
-                del self._phones[account_id]
-            if account_id in self._auth_tokens:
-                del self._auth_tokens[account_id]
+    async def disconnect_account(self, account_id: int):
+        """Disconnect Max client for account."""
+        async with self._get_lock(account_id):
+            await self._disconnect_account_unlocked(account_id)
 
     async def close_all(self):
         """Close all Max client connections"""

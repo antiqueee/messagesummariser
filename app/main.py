@@ -1590,7 +1590,7 @@ async def verify_max_auth(account_id: int, data: AccountVerifyRequest):
 
     try:
         mm = get_max_manager()
-        result = await mm.complete_auth_code(account_id, data.code)
+        result = await mm.complete_auth_code(account_id, data.code, data.password)
         if result.get("status") == "success":
             await db.update_max_account_authorized(account_id, True)
         return result

@@ -1817,6 +1817,10 @@
                 <label>Код из SMS или приложения Max:</label>
                 <input type="text" id="max-auth-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
             </div>
+            <div class="form-group" id="max-auth-password-group" style="display:none;">
+                <label>Пароль двухфакторной аутентификации Max:</label>
+                <input type="password" id="max-auth-password" autocomplete="current-password">
+            </div>
             <div class="input-group">
                 <button class="btn btn-primary" id="max-auth-submit-btn" onclick="verifyMaxAuthCode()">Подтвердить</button>
                 <button class="btn btn-secondary" id="max-auth-resend-btn" onclick="resendMaxAuthCode()">Отправить код еще раз</button>
@@ -2303,6 +2307,8 @@
                 document.getElementById('max-auth-message').textContent =
                     result.message || 'Введите код, который пришел по SMS или в приложение Max.';
                 document.getElementById('max-auth-code').value = '';
+                document.getElementById('max-auth-password').value = '';
+                document.getElementById('max-auth-password-group').style.display = 'none';
                 showModal('max-auth-modal');
                 setTimeout(() => document.getElementById('max-auth-code').focus(), 50);
             } catch (e) {
@@ -2312,6 +2318,7 @@
 
         async function verifyMaxAuthCode() {
             const code = document.getElementById('max-auth-code').value.trim();
+            const password = document.getElementById('max-auth-password').value;
             const messageEl = document.getElementById('max-auth-message');
             const submitBtn = document.getElementById('max-auth-submit-btn');
             if (!code) {
@@ -2329,8 +2336,14 @@
                 const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/verify`, 'POST', {
                     account_id: currentMaxAuthAccountId,
                     code,
-                    password: null
+                    password: password || null
                 });
+                if (result.status === 'password_required') {
+                    messageEl.textContent = result.message || 'Введите пароль двухфакторной аутентификации Max.';
+                    document.getElementById('max-auth-password-group').style.display = 'block';
+                    document.getElementById('max-auth-password').focus();
+                    return;
+                }
                 if (result.status === 'success') {
                     closeModal('max-auth-modal');
                     alert('Авторизация Max успешна!');
@@ -2360,6 +2373,8 @@
                 const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/resend-code`, 'POST');
                 messageEl.textContent = result.message || 'Новый код запрошен. Проверьте SMS и приложение Max.';
                 document.getElementById('max-auth-code').value = '';
+                document.getElementById('max-auth-password').value = '';
+                document.getElementById('max-auth-password-group').style.display = 'none';
                 document.getElementById('max-auth-code').focus();
             } catch (e) {
                 messageEl.textContent = 'Ошибка: ' + e.message;
