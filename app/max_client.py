@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Optional
 
 MAX_SESSIONS_DIR = Path(__file__).parent.parent / "sessions" / "max"
 MAX_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_MAX_APP_VERSION = "26.25.0"
+DEFAULT_MAX_BUILD_NUMBER = 6790
 
 
 class MaxClientManager:
@@ -111,6 +114,29 @@ class MaxClientManager:
         path = MAX_SESSIONS_DIR / f"account_{account_id}"
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+    @staticmethod
+    def _build_user_agent():
+        """Build a currently supported Max fingerprint for pymax 1.x."""
+        from pymax.payloads import UserAgentPayload
+
+        app_version = os.getenv("MAX_APP_VERSION", DEFAULT_MAX_APP_VERSION).strip()
+        raw_build_number = os.getenv("MAX_BUILD_NUMBER", str(DEFAULT_MAX_BUILD_NUMBER)).strip()
+        try:
+            build_number = int(raw_build_number)
+        except ValueError:
+            print(
+                f"[MaxClient] Invalid MAX_BUILD_NUMBER={raw_build_number!r}; "
+                f"using {DEFAULT_MAX_BUILD_NUMBER}",
+                flush=True,
+            )
+            build_number = DEFAULT_MAX_BUILD_NUMBER
+
+        return UserAgentPayload(
+            device_type="DESKTOP",
+            app_version=app_version or DEFAULT_MAX_APP_VERSION,
+            build_number=build_number,
+        )
 
     def _is_socket_connected(self, account_id: int) -> bool:
         client = self._clients.get(account_id)
@@ -396,9 +422,7 @@ class MaxClientManager:
 
             try:
                 from pymax import SocketMaxClient
-                from pymax.payloads import UserAgentPayload
-
-                ua = UserAgentPayload(device_type="DESKTOP")
+                ua = self._build_user_agent()
                 client = SocketMaxClient(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),

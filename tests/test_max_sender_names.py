@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.max_client import MaxClientManager
 
@@ -24,6 +25,13 @@ class FakeMaxClient:
 
 
 class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
+    def test_user_agent_uses_supported_max_version(self):
+        with patch.dict("os.environ", {}, clear=True):
+            user_agent = MaxClientManager._build_user_agent()
+
+        self.assertEqual(user_agent.app_version, "26.25.0")
+        self.assertEqual(user_agent.build_number, 6790)
+
     def test_user_profile_contains_identity_avatar_and_deep_link(self):
         user = SimpleNamespace(
             id=74481502,
