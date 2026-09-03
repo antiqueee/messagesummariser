@@ -65,6 +65,22 @@ class FakeAuthClient:
 
 
 class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
+    def test_audio_attachment_allows_missing_transcription_status(self):
+        MaxClientManager()
+        from pymax.types import AudioAttach
+
+        attachment = AudioAttach.from_dict({
+            "_type": "AUDIO",
+            "duration": 1200,
+            "audioId": 42,
+            "url": "https://example.test/audio",
+            "wave": "",
+            "token": "token",
+        })
+
+        self.assertEqual(attachment.audio_id, 42)
+        self.assertEqual(attachment.transcription_status, "")
+
     def test_user_agent_uses_supported_max_version(self):
         with patch.dict("os.environ", {}, clear=True):
             user_agent = MaxClientManager._build_user_agent()

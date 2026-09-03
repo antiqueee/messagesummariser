@@ -25,6 +25,7 @@ class MaxClientManager:
         self._password_challenges: dict[int, dict] = {}
         self._patch_pymax_socket_unpacker()
         self._patch_pymax_contact_attach_parser()
+        self._patch_pymax_audio_attach_parser()
 
     def _patch_pymax_socket_unpacker(self) -> None:
         """Make pymax tolerate larger compressed sync packets from Max."""
@@ -105,6 +106,31 @@ class MaxClientManager:
 
         ContactAttach.from_dict = classmethod(from_dict)
         ContactAttach._messagesummariser_optional_fields_patch = True
+
+    def _patch_pymax_audio_attach_parser(self) -> None:
+        """Accept voice messages where Max omits optional transcription metadata."""
+        try:
+            from pymax.static.enum import AttachType
+            from pymax.types import AudioAttach
+        except ImportError:
+            return
+
+        if getattr(AudioAttach, "_messagesummariser_optional_fields_patch", False):
+            return
+
+        def from_dict(cls, data):
+            return cls(
+                duration=data.get("duration", 0),
+                audio_id=data.get("audioId", 0),
+                url=data.get("url", ""),
+                wave=data.get("wave", ""),
+                transcription_status=data.get("transcriptionStatus", ""),
+                token=data.get("token", ""),
+                type=AttachType(data.get("_type", AttachType.AUDIO)),
+            )
+
+        AudioAttach.from_dict = classmethod(from_dict)
+        AudioAttach._messagesummariser_optional_fields_patch = True
 
     def _get_lock(self, account_id: int) -> asyncio.Lock:
         if account_id not in self._locks:
