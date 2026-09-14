@@ -1491,6 +1491,10 @@
                     VK аккаунты
                     <button class="btn btn-primary btn-small" onclick="showAddVkAccountModal()">+ Добавить</button>
                 </h2>
+                <div class="input-group" style="margin-bottom: 16px;">
+                    <button class="btn btn-primary btn-small" onclick="connectVkWeb()">Подключить VK через браузер</button>
+                    <span id="vk-web-status" style="align-self: center;">Браузер VK не подключён</span>
+                </div>
                 <div id="vk-accounts-list"></div>
             </div>
         </div>
@@ -1545,6 +1549,14 @@
                         <input type="datetime-local" id="report-end-date">
                     </div>
                 </div>
+
+                <label style="display: inline-flex; align-items: center; gap: 10px; margin: 2px 0 16px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; background: var(--field);">
+                    <input type="checkbox" id="report-exclude-vk" style="width: 18px; height: 18px; flex: 0 0 auto;">
+                    <span>
+                        <strong style="display: block; font-size: 14px;">Без VK-чатов</strong>
+                        <span style="display: block; margin-top: 2px; color: var(--muted); font-size: 12px;">Сформировать сводку только по Telegram и Max</span>
+                    </span>
+                </label>
 
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <button class="btn btn-success" id="generate-report-btn" onclick="generateReport()">Сформировать сводку</button>
@@ -2405,6 +2417,31 @@
         }
 
         // =================== VK Accounts ===================
+        async function loadVkWebStatus() {
+            const statusElement = document.getElementById('vk-web-status');
+            if (!statusElement) return;
+            try {
+                const result = await api('/api/vk/web/status');
+                statusElement.textContent = result.message;
+                statusElement.style.color = result.authorized ? '#218354' : '';
+            } catch (e) {
+                statusElement.textContent = 'Ошибка проверки браузера VK';
+            }
+        }
+
+        async function connectVkWeb() {
+            const statusElement = document.getElementById('vk-web-status');
+            statusElement.textContent = 'Открываю Chrome…';
+            try {
+                const result = await api('/api/vk/web/connect', 'POST');
+                statusElement.textContent = result.message;
+                statusElement.style.color = result.authorized ? '#218354' : '';
+                setTimeout(loadVkWebStatus, 3000);
+            } catch (e) {
+                statusElement.textContent = 'Ошибка: ' + e.message;
+            }
+        }
+
         async function loadVkAccounts() {
             const container = document.getElementById('vk-accounts-list');
             try {
@@ -3294,6 +3331,7 @@
             const complexIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
             const startDate = getISODateFromInput('report-start-date');
             const endDate = getISODateFromInput('report-end-date');
+            const excludeVk = Boolean(document.getElementById('report-exclude-vk')?.checked);
 
             if (complexIds.length === 0) {
                 alert('Выберите хотя бы один ЖК');
@@ -3319,7 +3357,8 @@
                 const job = await api('/api/reports/generate/start', 'POST', {
                     complex_ids: complexIds,
                     start_date: startDate,
-                    end_date: endDate
+                    end_date: endDate,
+                    exclude_vk: excludeVk
                 });
                 updateReportProgressUI(job);
 
@@ -3822,7 +3861,7 @@
                 btn.disabled = true;
                 btn.textContent = 'Выгружаю...';
             }
-            resultEl.innerHTML = '<div style="color: #666; font-size: 13px; padding: 8px 0;">AI структурирует сводки и записывает в таблицы...</div>';
+            resultEl.innerHTML = '<div style="color: #666; font-size: 13px; padding: 8px 0;">Записываю проверенные события в таблицы...</div>';
 
             // Build payload: only AI complexes with a summary
             const complexes = lastReport.complexes
@@ -3830,7 +3869,7 @@
                 .map(c => ({
                     complex_id: c.complex_id,
                     complex_name: c.complex_name,
-                    summary: getEditedDailySummary(c.complex_id),
+                    structured_rows: c.structured_rows,
                 }));
 
             if (complexes.length === 0) {
@@ -4330,6 +4369,7 @@
         loadAccounts();
         loadMaxAccounts();
         loadVkAccounts();
+        loadVkWebStatus();
         loadProxies();
     </script>
 </body>

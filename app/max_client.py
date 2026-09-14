@@ -26,6 +26,7 @@ class MaxClientManager:
         self._patch_pymax_socket_unpacker()
         self._patch_pymax_contact_attach_parser()
         self._patch_pymax_audio_attach_parser()
+        self._patch_pymax_media_attach_parsers()
 
     def _patch_pymax_socket_unpacker(self) -> None:
         """Make pymax tolerate larger compressed sync packets from Max."""
@@ -132,6 +133,101 @@ class MaxClientManager:
         AudioAttach.from_dict = classmethod(from_dict)
         AudioAttach._messagesummariser_optional_fields_patch = True
 
+    def _patch_pymax_media_attach_parsers(self) -> None:
+        """Treat attachment metadata as optional when reading Max history.
+
+        Max occasionally omits fields such as video duration while pymax 1.x
+        indexes every field as required.  Reports only need the attachment type,
+        so missing media metadata must not make the whole chat unreadable.
+        """
+        try:
+            from pymax.static.enum import AttachType
+            from pymax.types import (
+                ControlAttach,
+                FileAttach,
+                PhotoAttach,
+                StickerAttach,
+                VideoAttach,
+            )
+        except ImportError:
+            return
+
+        if getattr(VideoAttach, "_messagesummariser_optional_fields_patch", False):
+            return
+
+        def photo_from_dict(cls, data):
+            return cls(
+                base_url=data.get("baseUrl", ""),
+                height=data.get("height", 0),
+                width=data.get("width", 0),
+                photo_id=data.get("photoId", 0),
+                photo_token=data.get("photoToken", ""),
+                preview_data=data.get("previewData"),
+                type=AttachType(data.get("_type", AttachType.PHOTO)),
+            )
+
+        def video_from_dict(cls, data):
+            return cls(
+                height=data.get("height", 0),
+                width=data.get("width", 0),
+                video_id=data.get("videoId", 0),
+                duration=data.get("duration", 0),
+                preview_data=data.get("previewData", ""),
+                type=AttachType(data.get("_type", AttachType.VIDEO)),
+                thumbnail=data.get("thumbnail", ""),
+                token=data.get("token", ""),
+                video_type=data.get("videoType", 0),
+            )
+
+        def file_from_dict(cls, data):
+            return cls(
+                file_id=data.get("fileId", 0),
+                name=data.get("name", ""),
+                size=data.get("size", 0),
+                token=data.get("token", ""),
+                type=AttachType(data.get("_type", AttachType.FILE)),
+            )
+
+        def sticker_from_dict(cls, data):
+            return cls(
+                author_type=data.get("authorType", ""),
+                lottie_url=data.get("lottieUrl"),
+                url=data.get("url", ""),
+                sticker_id=data.get("stickerId", 0),
+                tags=data.get("tags"),
+                width=data.get("width", 0),
+                set_id=data.get("setId", 0),
+                time=data.get("time", 0),
+                sticker_type=data.get("stickerType", ""),
+                audio=data.get("audio", False),
+                height=data.get("height", 0),
+                type=AttachType(data.get("_type", AttachType.STICKER)),
+            )
+
+        def control_from_dict(cls, data):
+            attach_type = AttachType(data.get("_type", AttachType.CONTROL))
+            extra = {
+                key: value
+                for key, value in data.items()
+                if key not in {"_type", "event"}
+            }
+            return cls(type=attach_type, event=data.get("event", "control"), **extra)
+
+        PhotoAttach.from_dict = classmethod(photo_from_dict)
+        VideoAttach.from_dict = classmethod(video_from_dict)
+        FileAttach.from_dict = classmethod(file_from_dict)
+        StickerAttach.from_dict = classmethod(sticker_from_dict)
+        ControlAttach.from_dict = classmethod(control_from_dict)
+
+        for attach_class in (
+            PhotoAttach,
+            VideoAttach,
+            FileAttach,
+            StickerAttach,
+            ControlAttach,
+        ):
+            attach_class._messagesummariser_optional_fields_patch = True
+
     def _get_lock(self, account_id: int) -> asyncio.Lock:
         if account_id not in self._locks:
             self._locks[account_id] = asyncio.Lock()
@@ -214,7 +310,10 @@ class MaxClientManager:
         if not text:
             attach_texts = []
             for attach in getattr(msg, 'attaches', []) or []:
-                attach_type = str(getattr(attach, 'type', '')).upper()
+                raw_attach_type = getattr(attach, 'type', '')
+                attach_type = str(
+                    getattr(raw_attach_type, 'value', raw_attach_type)
+                ).upper()
                 if attach_type == 'CONTROL':
                     event = getattr(attach, 'event', None)
                     attach_texts.append(f"[Системное событие: {event or 'control'}]")
@@ -234,7 +333,8 @@ class MaxClientManager:
             if attach_texts:
                 text = " ".join(attach_texts)
             else:
-                msg_type = str(getattr(msg, 'type', '') or '').upper()
+                raw_msg_type = getattr(msg, 'type', '') or ''
+                msg_type = str(getattr(raw_msg_type, 'value', raw_msg_type)).upper()
                 if msg_type in {'SYSTEM', 'SERVICE'}:
                     text = f"[{msg_type}]"
                 else:
@@ -395,8 +495,9 @@ class MaxClientManager:
             chat_id: int,
             from_time: Optional[int] = None,
             backward: int = 200,
+            retry_empty: bool = False,
     ):
-        """Fetch Max history page and raise on failure instead of masking it as empty data."""
+        """Fetch a Max history page without masking transient failures as empty data."""
         client = self._clients.get(account_id)
         if not client:
             raise RuntimeError(f"No Max client for account {account_id}")
@@ -407,7 +508,19 @@ class MaxClientManager:
             try:
                 # On retries use smaller page size to avoid large responses breaking the socket
                 fetch_size = backward if attempt == 0 else min(backward, 50)
-                return await client.fetch_history(chat_id=chat_id, from_time=from_time, backward=fetch_size)
+                history = await client.fetch_history(
+                    chat_id=chat_id,
+                    from_time=from_time,
+                    backward=fetch_size,
+                )
+                if history or not retry_empty or attempt == 2:
+                    return history
+                print(
+                    f"[MaxClient] Empty first history page attempt {attempt + 1}/3 "
+                    f"for account {account_id} chat {chat_id}, retrying...",
+                    flush=True,
+                )
+                await asyncio.sleep(0.5)
             except Exception as e:
                 err_name = e.__class__.__name__
                 if (
@@ -772,6 +885,7 @@ class MaxClientManager:
                     chat_id=chat_id,
                     from_time=from_time,
                     backward=page_size,
+                    retry_empty=pages == 1,
                 )
                 if not history:
                     break

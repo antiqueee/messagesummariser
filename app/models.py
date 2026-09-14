@@ -133,6 +133,7 @@ class GenerateReportRequest(BaseModel):
     complex_ids: list[int]
     start_date: str
     end_date: str
+    exclude_vk: bool = False
 
     @field_validator('start_date', 'end_date')
     @classmethod

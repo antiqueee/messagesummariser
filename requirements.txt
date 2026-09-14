@@ -14,3 +14,4 @@ python-socks[asyncio]>=2.0.0
 maxapi-python==1.2.5
 gspread>=6.0.0
 google-auth>=2.0.0
+playwright==1.55.0

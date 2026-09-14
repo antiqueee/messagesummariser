@@ -4,7 +4,7 @@ import re
 import traceback
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
 
@@ -102,7 +102,13 @@ def build_report_chat_name(chat: dict) -> str:
 from .telegram_client import init_telegram_manager, get_telegram_manager
 from .max_client import init_max_manager, get_max_manager
 from .proxy_manager import get_proxy_manager
-from .source_router import fetch_chat_messages, get_source_label, normalize_source_name, SourceMessageFetchError
+from .source_router import (
+    SourceMessageFetchError,
+    exclude_chat_sources,
+    fetch_chat_messages,
+    get_source_label,
+    normalize_source_name,
+)
 from .summarizer import (
     init_summarizer,
     get_summarizer,
@@ -111,6 +117,7 @@ from .summarizer import (
     get_default_negativists_rules,
 )
 from .vk_client import init_vk_manager, get_vk_manager
+from .vk_web_client import get_vk_web_manager
 from .bot import start_bot, stop_bot
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
@@ -171,7 +178,7 @@ async def lifespan(app: FastAPI):
     if openrouter_key:
         try:
             init_summarizer(openrouter_key, ai_model)
-            print(f"Summarizer initialized with model: {ai_model or 'google/gemini-2.5-flash-preview'}")
+            print(f"Summarizer initialized with model: {ai_model or 'google/gemini-3.8-flash'}")
         except Exception as e:
             print(f"WARNING: Summarizer init skipped ({e}). Summarization will be available later.")
 
@@ -227,6 +234,10 @@ async def lifespan(app: FastAPI):
         mm = get_max_manager()
         await mm.close_all()
     except RuntimeError:
+        pass
+    try:
+        await get_vk_web_manager().close()
+    except Exception:
         pass
 
 
@@ -652,15 +663,15 @@ async def export_report_to_sheets(request: Request):
     """
     Export generated report summaries to Google Sheets.
 
-    Uses AI to parse the free-form summary into structured rows matching the
-    sheet column layout:
+    Uses the validated event rows produced during report generation, without
+    sending the editable prose through AI a second time. Sheet column layout:
       A: Дата | B: No | C: Тревожные темы | D: Чат, где обсуждают |
       E: Доп. информация | F: Риски/реакция | G: Основные (фоновые) темы
 
     Body: {
       "date_str": "14.04.2026",
       "complexes": [
-        {"complex_id": 1, "complex_name": "ЖК Солнечный", "summary": "..."}
+        {"complex_id": 1, "complex_name": "ЖК Солнечный", "structured_rows": [...]}
       ]
     }
     """
@@ -670,14 +681,6 @@ async def export_report_to_sheets(request: Request):
         raise HTTPException(
             status_code=400,
             detail="Google Sheets не настроен. Добавьте GOOGLE_SHEETS_CREDENTIALS_FILE в .env файл."
-        )
-
-    try:
-        summarizer = get_summarizer()
-    except RuntimeError:
-        raise HTTPException(
-            status_code=400,
-            detail="AI-суммаризатор не настроен. Добавьте OPENROUTER_API_KEY в .env файл."
         )
 
     data = await request.json()
@@ -692,7 +695,7 @@ async def export_report_to_sheets(request: Request):
     results = []
     for item in complexes_payload:
         complex_id = item.get("complex_id")
-        summary = item.get("summary", "").strip()
+        structured_rows = item.get("structured_rows")
         complex_name = item.get("complex_name", str(complex_id))
 
         complex_row = await db.get_complex(complex_id)
@@ -717,22 +720,14 @@ async def export_report_to_sheets(request: Request):
             })
             continue
 
-        if not summary:
+        if not isinstance(structured_rows, list):
             results.append({
                 "complex_id": complex_id,
                 "complex_name": complex_name,
                 "success": False,
-                "message": "Сводка пустая — нечего экспортировать",
+                "message": "Нет проверенных карточек событий — сформируйте сводку заново",
             })
             continue
-
-        # Ask AI to parse the free-form summary into structured rows
-        print(f"[Sheets] Structuring summary for {complex_name}...", flush=True)
-        structured_rows = await summarizer.extract_for_sheets(
-            complex_name=complex_name,
-            summary_text=summary,
-            date_str=date_str,
-        )
 
         # Write rows to the Google Sheet
         print(f"[Sheets] Writing {len(structured_rows)} rows to sheet for {complex_name}...", flush=True)
@@ -782,6 +777,7 @@ async def generate_weekly_report(data: GenerateWeeklyReportRequest):
         rules = get_default_weekly_report_rules()
 
     summarizer.reset_usage()
+    weekly_run_id = str(uuid.uuid4())
     results = []
 
     for complex_id in data.complex_ids:
@@ -868,6 +864,7 @@ async def generate_weekly_report(data: GenerateWeeklyReportRequest):
         })
 
     usage = summarizer.get_usage_summary()
+    await db.save_ai_usage_records(weekly_run_id, usage.get('records') or [])
     print(
         "[Weekly] AI usage total: "
         f"calls={usage['calls']}, "
@@ -883,7 +880,7 @@ async def generate_weekly_report(data: GenerateWeeklyReportRequest):
         "period_end": end_date.isoformat(),
         "models": [model],
         "results": results,
-        "usage": usage,
+        "usage": {key: value for key, value in usage.items() if key != 'records'},
     }
 
 
@@ -984,8 +981,14 @@ async def _generate_report_payload(
             if k in data.complex_ids
         }
 
+    if data.exclude_vk:
+        chats_by_complex = exclude_chat_sources(chats_by_complex, {"vk"})
+
     if not chats_by_complex:
-        raise HTTPException(status_code=400, detail="No monitored chats found")
+        detail = "Не найдено чатов для формирования сводки"
+        if data.exclude_vk:
+            detail += " после исключения VK"
+        raise HTTPException(status_code=400, detail=detail)
 
     total_chats = sum(len(chats) for chats in chats_by_complex.values())
     total_complexes = len(chats_by_complex)
@@ -1003,7 +1006,9 @@ async def _generate_report_payload(
         completed_chats=0,
     )
 
+    report_run_id = str(uuid.uuid4())
     report = {
+        'report_run_id': report_run_id,
         'generated_at': datetime.now().isoformat(),
         'period_start': start_date.isoformat(),
         'period_end': end_date.isoformat(),
@@ -1109,6 +1114,7 @@ async def _generate_report_payload(
             chats_with_messages.append({
                 'chat_name': chat_name,
                 'report_chat_name': report_chat_name,
+                'source': source,
                 'messages': messages,
                 'content_filter': content_filter
             })
@@ -1138,14 +1144,38 @@ async def _generate_report_payload(
             )
 
             try:
-                summary_text = await summarizer.summarize_complex(
+                memory_events = await db.get_recent_event_memory(
+                    complex_id,
+                    start_date - timedelta(days=14),
+                )
+                pipeline_result = await summarizer.build_complex_report(
                     complex_name=complex_name,
                     chats_with_messages=chats_with_messages,
                     start_date=start_date,
                     end_date=end_date,
-                    rules=rules
+                    rules=rules,
+                    memory_events=memory_events,
                 )
-                complex_data['summary'] = summary_text
+                complex_data['summary'] = pipeline_result['summary_text']
+                complex_data['events'] = pipeline_result['events']
+                complex_data['structured_rows'] = pipeline_result['sheet_rows']
+                complex_data['verification'] = {
+                    'chats_checked': sum(
+                        1 for item in pipeline_result['chat_diagnostics']
+                        if item.get('verification_used')
+                    ),
+                    'errors': [
+                        item['verification_error']
+                        for item in pipeline_result['chat_diagnostics']
+                        if item.get('verification_error')
+                    ],
+                }
+                await db.upsert_event_memory(
+                    complex_id=complex_id,
+                    events=pipeline_result['events'],
+                    period_start=start_date.isoformat(),
+                    period_end=end_date.isoformat(),
+                )
                 print(f"[Report] Done: {complex_name}")
             except Exception as e:
                 print(f"[Report] Error for {complex_name}: {e}")
@@ -1170,6 +1200,10 @@ async def _generate_report_payload(
 
     if summarizer:
         usage = summarizer.get_usage_summary()
+        await db.save_ai_usage_records(report_run_id, usage.get('records') or [])
+        report['usage'] = {
+            key: value for key, value in usage.items() if key != 'records'
+        }
         print(
             "[Report] AI usage total: "
             f"calls={usage['calls']}, "
@@ -1758,6 +1792,19 @@ async def add_max_chat(account_id: int, data: MaxChatAddRequest):
 
 
 # ============== VK Messenger Endpoints ==============
+
+@app.post("/api/vk/web/connect")
+async def connect_vk_web():
+    try:
+        return await get_vk_web_manager().open_login()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось открыть VK в Chrome: {e}")
+
+
+@app.get("/api/vk/web/status")
+async def get_vk_web_status():
+    return await get_vk_web_manager().status()
+
 
 @app.get("/api/vk/accounts")
 async def get_vk_accounts():

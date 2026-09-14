@@ -1,4 +1,5 @@
 import aiosqlite
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -223,6 +224,68 @@ async def init_db():
                 FOREIGN KEY (report_history_id) REFERENCES report_history(id),
                 FOREIGN KEY (complex_id) REFERENCES complexes(id),
                 FOREIGN KEY (max_account_id) REFERENCES max_accounts(id)
+            )
+        """)
+
+        # Evidence-backed event memory for daily reports. Event snapshots remain
+        # separate from editable prose so later reports can use factual history
+        # without re-parsing old summaries.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS event_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                complex_id INTEGER NOT NULL,
+                event_key TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                details TEXT,
+                target TEXT,
+                location TEXT,
+                severity TEXT NOT NULL,
+                action_stage TEXT NOT NULL,
+                state TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                participant_count INTEGER NOT NULL DEFAULT 0,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                chats_json TEXT NOT NULL,
+                risk_flags_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                verification_status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (complex_id) REFERENCES complexes(id),
+                UNIQUE(complex_id, event_key)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS event_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_memory_id INTEGER NOT NULL,
+                complex_id INTEGER NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (event_memory_id) REFERENCES event_memory(id),
+                FOREIGN KEY (complex_id) REFERENCES complexes(id)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_event_memory_complex_last_seen
+            ON event_memory(complex_id, last_seen)
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ai_usage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_run_id TEXT,
+                purpose TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                cost_usd REAL,
+                created_at TEXT NOT NULL
             )
         """)
 
@@ -595,6 +658,215 @@ async def get_report_history(report_history_id: int) -> Optional[dict]:
         cursor = await db.execute("SELECT * FROM report_history WHERE id = ?", (report_history_id,))
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+async def get_recent_event_memory(
+        complex_id: int,
+        since: datetime,
+        limit: int = 60,
+) -> list[dict]:
+    """Return compact recent memory cards for report context."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM event_memory
+            WHERE complex_id = ? AND last_seen >= ?
+            ORDER BY
+                CASE state WHEN 'escalated' THEN 0 WHEN 'ongoing' THEN 1 ELSE 2 END,
+                last_seen DESC
+            LIMIT ?
+            """,
+            (complex_id, since.isoformat(), limit),
+        )
+        rows = await cursor.fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        for source_field, target_field in (
+            ("chats_json", "chat_names"),
+            ("risk_flags_json", "risk_flags"),
+            ("evidence_json", "evidence"),
+        ):
+            try:
+                item[target_field] = json.loads(item.pop(source_field) or "[]")
+            except (TypeError, json.JSONDecodeError):
+                item[target_field] = []
+        result.append(item)
+    return result
+
+
+def _memory_state(existing: Optional[dict], event: dict) -> str:
+    requested = str(event.get("state") or "new")
+    if requested == "resolved":
+        return "resolved"
+    if not existing:
+        return "new"
+    severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    stage_rank = {
+        "none": 0, "suggestion": 1, "supported": 2,
+        "collecting_contacts": 3, "scheduled": 4, "occurred": 5,
+    }
+    old_severity = severity_rank.get(existing.get("severity"), 0)
+    new_severity = severity_rank.get(event.get("severity"), 0)
+    old_stage = stage_rank.get(existing.get("action_stage"), 0)
+    new_stage = stage_rank.get(event.get("action_stage"), 0)
+    if requested == "escalated" or new_severity > old_severity or new_stage > old_stage:
+        return "escalated"
+    # Do not infer improvement merely because today's messages contain fewer
+    # participants/details. De-escalation must be explicitly evidenced.
+    if requested == "de_escalated":
+        return "de_escalated"
+    return "ongoing"
+
+
+async def upsert_event_memory(
+        *,
+        complex_id: int,
+        events: list[dict],
+        period_start: str,
+        period_end: str,
+) -> list[int]:
+    """Persist validated events and immutable observations in one transaction."""
+    if not events:
+        return []
+    now = datetime.now().isoformat()
+    memory_ids = []
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        for event in events:
+            existing_row = None
+            memory_id = event.get("memory_id")
+            if memory_id:
+                cursor = await db.execute(
+                    "SELECT * FROM event_memory WHERE id = ? AND complex_id = ?",
+                    (memory_id, complex_id),
+                )
+                existing_row = await cursor.fetchone()
+            if existing_row is None:
+                cursor = await db.execute(
+                    "SELECT * FROM event_memory WHERE complex_id = ? AND event_key = ?",
+                    (complex_id, event["event_key"]),
+                )
+                existing_row = await cursor.fetchone()
+            existing = dict(existing_row) if existing_row else None
+            same_period_rerun = bool(existing and existing.get("last_seen") == period_end)
+            state = existing["state"] if same_period_rerun else _memory_state(existing, event)
+            first_seen = existing["first_seen"] if existing else period_start
+            values = (
+                event.get("event_type") or "other",
+                event.get("title") or "Событие",
+                event.get("summary") or "",
+                event.get("details") or "",
+                event.get("target") or "",
+                event.get("location") or "",
+                event.get("severity") or "low",
+                event.get("action_stage") or "none",
+                state,
+                float(event.get("confidence") or 0),
+                period_end,
+                int(event.get("participant_count") or 0),
+                int(event.get("message_count") or 0),
+                json.dumps(event.get("chat_names") or [], ensure_ascii=False),
+                json.dumps(event.get("risk_flags") or [], ensure_ascii=False),
+                json.dumps(event.get("evidence") or [], ensure_ascii=False),
+                event.get("verification_status") or "not_required",
+                now,
+            )
+            if existing:
+                memory_id = existing["id"]
+                await db.execute(
+                    """
+                    UPDATE event_memory SET
+                        event_type=?, title=?, summary=?, details=?, target=?, location=?,
+                        severity=?, action_stage=?, state=?, confidence=?, last_seen=?,
+                        participant_count=?, message_count=?, chats_json=?, risk_flags_json=?,
+                        evidence_json=?, verification_status=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    values + (memory_id,),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO event_memory (
+                        complex_id, event_key, event_type, title, summary, details,
+                        target, location, severity, action_stage, state, confidence,
+                        first_seen, last_seen, participant_count, message_count,
+                        chats_json, risk_flags_json, evidence_json, verification_status,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        complex_id, event["event_key"], values[0], values[1], values[2],
+                        values[3], values[4], values[5], values[6], values[7], state,
+                        values[9], first_seen, period_end, values[11], values[12],
+                        values[13], values[14], values[15], values[16], now, now,
+                    ),
+                )
+                memory_id = cursor.lastrowid
+            memory_ids.append(int(memory_id))
+            snapshot = dict(event)
+            snapshot["memory_id"] = int(memory_id)
+            snapshot["state"] = state
+            serialized_snapshot = json.dumps(snapshot, ensure_ascii=False)
+            cursor = await db.execute(
+                """
+                SELECT id FROM event_observations
+                WHERE event_memory_id = ? AND period_start = ? AND period_end = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (memory_id, period_start, period_end),
+            )
+            existing_observation = await cursor.fetchone()
+            if existing_observation:
+                await db.execute(
+                    "UPDATE event_observations SET event_json=?, created_at=? WHERE id=?",
+                    (serialized_snapshot, now, existing_observation["id"]),
+                )
+            else:
+                await db.execute(
+                    """
+                    INSERT INTO event_observations (
+                        event_memory_id, complex_id, period_start, period_end,
+                        event_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        memory_id, complex_id, period_start, period_end,
+                        serialized_snapshot, now,
+                    ),
+                )
+        await db.commit()
+    return memory_ids
+
+
+async def save_ai_usage_records(report_run_id: str, records: list[dict]) -> None:
+    if not records:
+        return
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.executemany(
+            """
+            INSERT INTO ai_usage_log (
+                report_run_id, purpose, model, prompt_tokens,
+                completion_tokens, cost_usd, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    report_run_id,
+                    record.get("purpose") or "unknown",
+                    record.get("model") or "unknown",
+                    int(record.get("prompt_tokens") or 0),
+                    int(record.get("completion_tokens") or 0),
+                    record.get("cost_usd"),
+                    now,
+                )
+                for record in records
+            ],
+        )
+        await db.commit()
 
 
 async def log_max_delivery(

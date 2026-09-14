@@ -24,6 +24,16 @@ class FakeMaxClient:
         ]
 
 
+class FakeHistoryClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def fetch_history(self, **kwargs):
+        self.calls += 1
+        return self.responses.pop(0)
+
+
 class FakeEngine:
     def __init__(self):
         self.disposed = False
@@ -65,6 +75,23 @@ class FakeAuthClient:
 
 
 class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_empty_history_page_is_retried(self):
+        manager = MaxClientManager()
+        client = FakeHistoryClient([[], [SimpleNamespace(id=42)]])
+        manager._clients[9] = client
+
+        with patch("app.max_client.asyncio.sleep", return_value=None):
+            history = await manager._fetch_history_with_retry(
+                account_id=9,
+                chat_id=-123,
+                from_time=1_000,
+                backward=200,
+                retry_empty=True,
+            )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(history[0].id, 42)
+
     def test_audio_attachment_allows_missing_transcription_status(self):
         MaxClientManager()
         from pymax.types import AudioAttach
@@ -80,6 +107,54 @@ class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(attachment.audio_id, 42)
         self.assertEqual(attachment.transcription_status, "")
+
+    def test_video_attachment_allows_missing_duration(self):
+        manager = MaxClientManager()
+        from pymax.types import Message, VideoAttach
+
+        attachment = VideoAttach.from_dict({
+            "_type": "VIDEO",
+            "videoId": 42,
+            "thumbnail": "https://example.test/preview.jpg",
+            "token": "token",
+        })
+
+        self.assertEqual(attachment.video_id, 42)
+        self.assertEqual(attachment.duration, 0)
+
+        message = Message.from_dict({
+            "chatId": -71003461216938,
+            "message": {
+                "id": 100,
+                "time": 1_788_800_000_000,
+                "text": "",
+                "type": "USER",
+                "sender": 74481502,
+                "attaches": [{
+                    "_type": "VIDEO",
+                    "videoId": 42,
+                    "thumbnail": "https://example.test/preview.jpg",
+                    "token": "token",
+                }],
+            },
+        })
+        normalized = manager._normalize_message(message)
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized["text"], "[Видео]")
+        self.assertEqual(normalized["message_id"], 100)
+
+    def test_other_media_attachments_allow_missing_optional_metadata(self):
+        MaxClientManager()
+        from pymax.types import FileAttach, PhotoAttach, StickerAttach
+
+        photo = PhotoAttach.from_dict({"_type": "PHOTO", "photoId": 1})
+        file = FileAttach.from_dict({"_type": "FILE", "fileId": 2})
+        sticker = StickerAttach.from_dict({"_type": "STICKER", "stickerId": 3})
+
+        self.assertEqual(photo.photo_id, 1)
+        self.assertEqual(file.file_id, 2)
+        self.assertEqual(sticker.sticker_id, 3)
 
     def test_user_agent_uses_supported_max_version(self):
         with patch.dict("os.environ", {}, clear=True):

@@ -14,6 +14,10 @@ VK_API_URL = "https://api.vk.com/method"
 VK_API_VERSION = "5.199"
 
 
+class VkFloodControlError(RuntimeError):
+    """VK has action-blocked the account's messaging API (error code 9)."""
+
+
 class VkClientManager:
     """Minimal VK OAuth/API manager for multi-account chat monitoring."""
 
@@ -22,6 +26,12 @@ class VkClientManager:
         self.app_secret = app_secret
         self.service_token = service_token
         self._pending_states: dict[str, int] = {}
+        self._api_rate_lock = asyncio.Lock()
+        self._last_api_call_at = 0.0
+        self._message_flood_blocked_tokens: set[str] = set()
+        # Keep all calls made with the shared VK account below the usual
+        # short-window API limit, including concurrent UI/report requests.
+        self._min_api_interval = 1.0
 
     @property
     def oauth_enabled(self) -> bool:
@@ -72,10 +82,25 @@ class VkClientManager:
                 raise RuntimeError(f"VK token exchange failed: {error_msg}")
             return payload
 
+    async def _wait_for_api_slot(self) -> None:
+        """Serialize VK requests and maintain a safe minimum interval."""
+        async with self._api_rate_lock:
+            loop = asyncio.get_running_loop()
+            wait_for = self._min_api_interval - (loop.time() - self._last_api_call_at)
+            if wait_for > 0:
+                await asyncio.sleep(wait_for)
+            self._last_api_call_at = loop.time()
+
     async def api_call(self, method: str, access_token: str, **params) -> dict:
+        if method.startswith("messages.") and access_token in self._message_flood_blocked_tokens:
+            raise VkFloodControlError(
+                f"VK API {method} заблокирован для этого аккаунта: Flood control"
+            )
         async with httpx.AsyncClient(timeout=30.0) as client:
             last_msg = None
-            for attempt in range(5):
+            max_attempts = 12
+            for attempt in range(max_attempts):
+                await self._wait_for_api_slot()
                 try:
                     response = await client.get(
                         f"{VK_API_URL}/{method}",
@@ -85,8 +110,10 @@ class VkClientManager:
                             "v": VK_API_VERSION,
                         },
                     )
-                    if response.status_code >= 500 and attempt < 4:
-                        delay = 0.5 * (attempt + 1)
+                    if response.status_code in {429} or response.status_code >= 500:
+                        if attempt == max_attempts - 1:
+                            response.raise_for_status()
+                        delay = min(1.0 * (2 ** attempt), 10.0)
                         print(
                             f"[VK] HTTP {response.status_code} on {method}, retrying in {delay:.1f}s",
                             flush=True,
@@ -96,9 +123,9 @@ class VkClientManager:
                     response.raise_for_status()
                 except httpx.RequestError as e:
                     last_msg = f"{type(e).__name__}: {str(e) or 'network request failed'}"
-                    if attempt == 4:
+                    if attempt == max_attempts - 1:
                         raise RuntimeError(f"VK API {method} network error: {last_msg}") from e
-                    delay = 0.5 * (attempt + 1)
+                    delay = min(1.0 * (2 ** attempt), 10.0)
                     print(f"[VK] {last_msg} on {method}, retrying in {delay:.1f}s", flush=True)
                     await asyncio.sleep(delay)
                     continue
@@ -109,10 +136,32 @@ class VkClientManager:
                 error = payload["error"]
                 msg = error.get("error_msg") or str(error)
                 last_msg = msg
-                if error.get("error_code") != 6 or attempt == 4:
+                raw_error_code = error.get("error_code", error.get("code"))
+                try:
+                    error_code = int(raw_error_code)
+                except (TypeError, ValueError):
+                    error_code = None
+
+                # VK responses in the wild use both error_code and code, and
+                # some gateways serialize the numeric code as a string.
+                if error_code not in {6, 9}:
                     raise RuntimeError(f"VK API {method} failed: {msg}")
 
-                delay = 0.4 * (attempt + 1)
+                if error_code == 9:
+                    # Error 9 is an account-level action ban. Retrying the same
+                    # token delays a report for minutes and cannot lift the ban;
+                    # let the source router immediately try another account.
+                    self._message_flood_blocked_tokens.add(access_token)
+                    raise VkFloodControlError(
+                        f"VK API {method} заблокирован для этого аккаунта: Flood control"
+                    )
+                elif attempt == max_attempts - 1:
+                    raise RuntimeError(
+                        f"VK API {method} временно заблокирован Flood control даже после "
+                        "пяти минут ожидания. Подождите 10–15 минут и повторите генерацию"
+                    )
+                else:
+                    delay = min(5.0 * (2 ** attempt), 30.0)
                 print(f"[VK] Rate limited on {method}, retrying in {delay:.1f}s", flush=True)
                 await asyncio.sleep(delay)
 
