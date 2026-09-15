@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+
 from app import database
 from app.event_pipeline import (
     chat_needs_verification,
@@ -274,7 +276,7 @@ class SelectiveVerifierTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("ОСОБОЕ ПРАВИЛО ЗАКАЗЧИКА", prompts[0])
 
-    async def test_both_analyzers_failing_never_becomes_a_no_events_report(self):
+    async def test_both_analyzers_failing_returns_partial_report_with_warning(self):
         summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
 
         async def failed_call(
@@ -284,17 +286,19 @@ class SelectiveVerifierTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("provider unavailable")
 
         summarizer._call_api = failed_call
-        with self.assertRaisesRegex(RuntimeError, "Не удалось надёжно проанализировать"):
-            await summarizer.build_complex_report(
-                complex_name="Тестовый ЖК",
-                chats_with_messages=[{
-                    "chat_name": "Соседи",
-                    "source": "telegram",
-                    "messages": [message(1, 1, "Сообщение")],
-                }],
-                start_date=datetime(2026, 9, 14),
-                end_date=datetime(2026, 9, 14, 23, 59),
-            )
+        result = await summarizer.build_complex_report(
+            complex_name="Тестовый ЖК",
+            chats_with_messages=[{
+                "chat_name": "Соседи",
+                "source": "telegram",
+                "messages": [message(1, 1, "Сообщение")],
+            }],
+            start_date=datetime(2026, 9, 14),
+            end_date=datetime(2026, 9, 14, 23, 59),
+        )
+
+        self.assertIn("не удалось надёжно проанализировать", result["summary_text"])
+        self.assertEqual(result["analysis_warnings"][0]["kind"], "chat_not_analyzed")
 
 
 class VerifierFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -355,9 +359,57 @@ class VerifierFallbackTests(unittest.IsolatedAsyncioTestCase):
             requested_models,
             [
                 "openai/gpt-5.6-luna-pro",
-                "openai/gpt-5.6-luna-pro",
                 "qwen/qwen3.8-flash",
             ],
+        )
+
+    async def test_timeout_moves_immediately_to_fallback_with_role_limit(self):
+        summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
+        requested_models = []
+        configured_timeouts = []
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "{\"events\":[]}"},
+                    }],
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                configured_timeouts.append(kwargs.get("timeout"))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, headers, content):
+                model = json.loads(content)["model"]
+                requested_models.append(model)
+                if model == "openai/gpt-5.6-luna-pro":
+                    raise httpx.ReadTimeout("slow upstream")
+                return FakeResponse()
+
+        with patch("app.summarizer.httpx.AsyncClient", FakeClient):
+            result = await summarizer._call_api(
+                "test",
+                model_override="openai/gpt-5.6-luna-pro",
+                model_fallbacks=["qwen/qwen3.8-flash"],
+                response_schema={"type": "object"},
+                purpose="risk_verification",
+            )
+
+        self.assertEqual(result, '{"events":[]}')
+        self.assertEqual(configured_timeouts, [75.0])
+        self.assertEqual(
+            requested_models,
+            ["openai/gpt-5.6-luna-pro", "qwen/qwen3.8-flash"],
         )
 
 

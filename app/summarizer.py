@@ -179,8 +179,7 @@ FINAL_REPORT_PROMPT = """Ты — старший аналитик. Напиши 
 - не перечисляй пустые и бытовые чаты, не пиши «требует внимания» без объяснения что именно произошло;
 - отличай предложение одного человека от поддержки, сбора контактов и назначенного действия;
 - при primary_only не выдавай спорную интерпретацию за установленный факт;
-- при verification_unavailable прямо и кратко укажи, что событие найдено основной моделью, но независимая проверка
-  временно недоступна; не выдавай спорную интерпретацию за подтверждённую;
+- при verification_unavailable не выдавай спорную интерпретацию за подтверждённую;
 - не используй markdown-заголовки и служебные слова. Выведи только готовый текст для отправки.
 
 Дополнительный пользовательский регламент ниже задаёт предметные приоритеты. Правила адаптивной длины и структуры
@@ -887,6 +886,23 @@ class ChatSummarizer:
             parts.append("\n".join(fields))
         return "\n\n---\n\n".join(parts)
 
+    @staticmethod
+    def _request_timeout_for(purpose: str) -> float:
+        role_timeouts = {
+            "daily_event_extraction": ("AI_EXTRACTION_TIMEOUT_SECONDS", 90),
+            "risk_verification": ("AI_VERIFIER_TIMEOUT_SECONDS", 75),
+            "daily_report_render": ("AI_RENDER_TIMEOUT_SECONDS", 60),
+            "weekly_report": ("AI_WEEKLY_TIMEOUT_SECONDS", 120),
+        }
+        env_name, default = role_timeouts.get(
+            purpose,
+            ("AI_REQUEST_TIMEOUT_SECONDS", 90),
+        )
+        try:
+            return max(10.0, float(os.getenv(env_name, str(default))))
+        except (TypeError, ValueError):
+            return float(default)
+
     async def _call_api(
             self,
             prompt: str,
@@ -945,7 +961,7 @@ class ChatSummarizer:
             models_to_try = [self.model] + [m for m in self.fallback_models if m != self.model]
         last_error = None
 
-        request_timeout = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "150"))
+        request_timeout = self._request_timeout_for(purpose)
         async with httpx.AsyncClient(timeout=request_timeout) as client:
             for model_attempt in models_to_try:
                 attempt_payload = dict(payload)
@@ -963,7 +979,10 @@ class ChatSummarizer:
                 else:
                     attempt_payload["temperature"] = 0
                 json_bytes = json.dumps(attempt_payload, ensure_ascii=False).encode('utf-8')
-                attempts = 2 if model_attempt == active_model else 1
+                # When an approved fallback exists, move to it immediately after
+                # one failed attempt. Retry the same model only when there is no
+                # alternative (for example, the weekly model).
+                attempts = 1 if len(models_to_try) > 1 else 2
                 for attempt in range(1, attempts + 1):
                     print(
                         f"[API] Trying model: {model_attempt} "
@@ -1215,13 +1234,28 @@ class ChatSummarizer:
 
         all_events = merge_complex_events(all_events)
 
-        hard_failures = [
-            item for item in chat_results
-            if item.get("verification_used") and item.get("verification_error")
-        ]
-        if hard_failures:
-            failed_chats = ", ".join(item["chat_name"] for item in hard_failures[:5])
-            raise RuntimeError("Не удалось надёжно проанализировать чаты: " + failed_chats)
+        analysis_warnings = []
+        for item in chat_results:
+            if not (item.get("verification_used") and item.get("verification_error")):
+                continue
+            if item.get("events"):
+                analysis_warnings.append({
+                    "chat_name": item["chat_name"],
+                    "kind": "verification_incomplete",
+                    "message": (
+                        f"Независимая проверка чата «{item['chat_name']}» временно недоступна; "
+                        "выводы по нему предварительные."
+                    ),
+                })
+            else:
+                analysis_warnings.append({
+                    "chat_name": item["chat_name"],
+                    "kind": "chat_not_analyzed",
+                    "message": (
+                        f"Чат «{item['chat_name']}» не удалось надёжно проанализировать; "
+                        "его данные не вошли в сводку."
+                    ),
+                })
 
         chat_statuses = [
             {"chat_name": item["chat_name"], "message_count": item["message_count"]}
@@ -1245,11 +1279,16 @@ class ChatSummarizer:
         else:
             summary_text = fallback_report(complex_name, [])
 
+        if analysis_warnings:
+            warning_text = "\n".join(item["message"] for item in analysis_warnings)
+            summary_text = f"{summary_text.rstrip()}\n\n⚠ {warning_text}"
+
         return {
             "summary_text": summary_text,
             "events": all_events,
             "sheet_rows": sheet_rows_from_events(all_events, chat_statuses),
             "chat_diagnostics": chat_results,
+            "analysis_warnings": analysis_warnings,
         }
 
     async def summarize_weekly_complex(

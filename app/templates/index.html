@@ -3249,9 +3249,11 @@
         let reportGenerationInProgress = false;
         let weeklyGenerationInProgress = false;
         let reportProgressLogItems = [];
+        let renderedReportComplexCount = 0;
 
         function resetReportProgressUI() {
             reportProgressLogItems = [];
+            renderedReportComplexCount = 0;
             updateReportProgressUI({
                 status: 'queued',
                 percent: 0,
@@ -3312,6 +3314,15 @@
             while (reportGenerationInProgress) {
                 const progress = await api(`/api/reports/generate/progress/${jobId}`);
                 updateReportProgressUI(progress);
+
+                const readyComplexes = progress.partial_result?.complexes || [];
+                if (readyComplexes.length > renderedReportComplexCount) {
+                    renderReport(progress.partial_result, {
+                        inProgress: true,
+                        totalComplexes: progress.total_complexes
+                    });
+                    renderedReportComplexCount = readyComplexes.length;
+                }
 
                 if (progress.status === 'done') {
                     return progress.result;
@@ -3382,9 +3393,14 @@
         // Store last report for copy function
         let lastReport = null;
 
-        function renderReport(report) {
-            lastReport = report;
+        function renderReport(report, options = {}) {
             const container = document.getElementById('report-result');
+            const isPartial = Boolean(options.inProgress);
+            const preservedText = new Map();
+            container.querySelectorAll('textarea.report-content').forEach(textarea => {
+                preservedText.set(textarea.id, textarea.value);
+            });
+            lastReport = report;
 
             if (report.complexes.length === 0) {
                 container.innerHTML = '<div class="empty-state">Нет данных для отчёта</div>';
@@ -3398,19 +3414,25 @@
             const endDate = new Date(report.period_end);
             const dateStr = startDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
 
+            const readyCount = report.complexes.length;
+            const totalCount = Number(options.totalComplexes || readyCount);
+            const headerTitle = isPartial
+                ? `готово ${readyCount} из ${totalCount} — остальные сводки генерируются`
+                : `сводка за ${dateStr}`;
+
             let html = `
                 <div class="alert alert-success" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                     <div>
-                        <strong>сводка за ${dateStr}</strong><br>
+                        <strong>${headerTitle}</strong><br>
                         <span style="font-size: 13px; color: #666;">
                             ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}
                         </span>
                     </div>
-	                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+	                    ${!isPartial ? `<div style="display: flex; gap: 8px; flex-wrap: wrap;">
 	                        <button class="btn btn-small copy-btn" onclick="copyReportAsText()">Копировать сводку</button>
 	                        ${isAI ? '<button class="btn btn-small copy-btn" id="save-all-daily-btn" onclick="saveAllDailyReportsToArchive()">Сохранить все в Google Doc</button>' : ''}
 	                        ${isAI ? `<button class="btn btn-small sheets-btn" id="sheets-export-btn" onclick="exportToSheets('${startDate.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'})}')">Выгрузить в Google Таблицы</button>` : ''}
-	                    </div>
+	                    </div>` : ''}
 	                </div>
 	                <div id="save-all-daily-status"></div>
 	                <div id="sheets-export-result"></div>
@@ -3430,15 +3452,22 @@
 
                 // If AI summary is available, show it
                 if (isAI && complex.summary) {
+                    const analysisWarnings = Array.isArray(complex.analysis_warnings)
+                        ? complex.analysis_warnings
+                        : [];
                     html += `
                         <div class="report-chat">
                             <textarea id="daily-summary-${complex.complex_id}" class="report-content"
                                 style="width: 100%; min-height: 260px;">${escapeHtml(complex.summary)}</textarea>
+                            ${analysisWarnings.length ? `<div class="alert" style="margin-top: 10px; background: #fff7e6; color: #8a5a00; border: 1px solid #f0d49a;">
+                                ${analysisWarnings.map(item => escapeHtml(item.message || '')).join('<br>')}
+                            </div>` : ''}
                             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px;">
                                 <button class="btn btn-secondary btn-small" onclick="saveDailyReport(${complex.complex_id}, false)">Сохранить в базу</button>
                                 <button class="btn btn-success btn-small" onclick="saveDailyReport(${complex.complex_id}, true)">Отправить в MAX</button>
                                 <span id="daily-report-status-${complex.complex_id}" style="font-size: 13px; color: #666;"></span>
                             </div>
+                            ${isPartial ? '<div style="margin-top: 8px; color: var(--muted); font-size: 13px;">Эта сводка уже готова; её можно отправить, пока остальные ЖК генерируются.</div>' : ''}
                         </div>
                     `;
                 } else {
@@ -3470,6 +3499,13 @@
 
             container.innerHTML = html;
             bindAutoResizeTextareas(container);
+            preservedText.forEach((value, id) => {
+                const textarea = document.getElementById(id);
+                if (textarea) {
+                    textarea.value = value;
+                    expandTextareaToContent(textarea);
+                }
+            });
         }
 
         function getReportComplexById(complexId) {

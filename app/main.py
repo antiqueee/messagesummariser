@@ -272,6 +272,36 @@ def _public_report_progress_job(job: dict) -> dict:
     return {k: v for k, v in job.items() if k not in {"updated_ts", "task"}}
 
 
+def _build_partial_report(report: dict) -> dict:
+    """Return the lightweight subset needed to display completed complexes."""
+    return {
+        key: report.get(key)
+        for key in (
+            "report_run_id",
+            "generated_at",
+            "period_start",
+            "period_end",
+            "mode",
+        )
+    } | {
+        "complexes": [
+            {
+                key: complex_data.get(key)
+                for key in (
+                    "complex_id",
+                    "complex_name",
+                    "chats",
+                    "summary",
+                    "verification",
+                    "analysis_warnings",
+                )
+                if key in complex_data
+            }
+            for complex_data in report.get("complexes", [])
+        ]
+    }
+
+
 async def _set_report_progress(job_id: str, **updates) -> None:
     job = REPORT_PROGRESS_JOBS.get(job_id)
     if not job:
@@ -1170,6 +1200,7 @@ async def _generate_report_payload(
                         if item.get('verification_error')
                     ],
                 }
+                complex_data['analysis_warnings'] = pipeline_result.get('analysis_warnings') or []
                 await db.upsert_event_memory(
                     complex_id=complex_id,
                     events=pipeline_result['events'],
@@ -1197,6 +1228,19 @@ async def _generate_report_payload(
             )
 
         report['complexes'].append(complex_data)
+        await emit(
+            status="running",
+            stage="complex_ready",
+            percent=min(98, 5 + int((completed_work_units / total_work_units) * 85)),
+            title=f"{complex_name}: можно читать",
+            detail=f"Готово ЖК: {len(report['complexes'])} из {total_complexes}. Генерация продолжается.",
+            current_complex=complex_name,
+            current_complex_index=complex_index,
+            completed_complexes=len(report['complexes']),
+            partial_result=_build_partial_report(report),
+            completed_work_units=completed_work_units,
+            total_work_units=total_work_units,
+        )
 
     if summarizer:
         usage = summarizer.get_usage_summary()
@@ -1273,6 +1317,7 @@ async def start_report_generation(data: GenerateReportRequest):
                 title="Сводка готова",
                 detail="Генерация завершена, результат открыт ниже.",
                 result=result,
+                partial_result=None,
             )
         except HTTPException as e:
             await _set_report_progress(
