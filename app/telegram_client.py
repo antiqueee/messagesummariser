@@ -1,9 +1,10 @@
 import os
 import asyncio
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, AsyncGenerator
+from zoneinfo import ZoneInfo
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import User, Chat, Channel, Message, ForumTopic
@@ -14,6 +15,12 @@ from .proxy_manager import get_proxy_manager, ProxyConfig
 
 SESSIONS_DIR = Path(__file__).parent.parent / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+REPORT_TIMEZONE = ZoneInfo(os.getenv("REPORT_TIMEZONE", "Europe/Moscow"))
+UTC = timezone.utc
+LIVE_TAIL_AGE = timedelta(minutes=30)
+LIVE_TAIL_WINDOW = timedelta(minutes=20)
+LIVE_TAIL_LIMIT = 1000
 
 # Connection errors that should trigger proxy switch
 CONNECTION_ERRORS = (
@@ -419,15 +426,18 @@ class TelegramClientManager:
             print(f"[get_messages] No client for account {account_id}")
             return []
 
-        # Strip timezone info for consistent comparison
-        start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
-        end_naive = end_date.replace(tzinfo=None) if end_date.tzinfo else end_date
+        # Dates from the browser are local wall-clock values. Telegram returns
+        # timezone-aware UTC datetimes. Converting both sides to aware UTC is
+        # essential: merely stripping tzinfo shifts Moscow reports by 3 hours.
+        start_utc = self._report_datetime_to_utc(start_date)
+        end_utc = self._report_datetime_to_utc(end_date)
 
         topic_filter = set(topic_ids) if topic_ids else None
         print(
             f"[get_messages] account_id={account_id}, "
             f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
-            f"period={start_naive} - {end_naive}, "
+            f"period={start_date} - {end_date}, "
+            f"utc={start_utc.isoformat()} - {end_utc.isoformat()}, "
             f"topics={topic_filter}, "
             f"limit={limit}, timeout={timeout_seconds}",
             flush=True
@@ -444,89 +454,120 @@ class TelegramClientManager:
                     print(f"[get_messages] No client for account {account_id} after retry", flush=True)
                     return []
 
-            messages = []
+            messages_by_id: dict[int, dict] = {}
+
+            def include_message(message) -> bool:
+                msg_date = self._telegram_datetime_to_utc(message.date)
+
+                if msg_date < start_utc or msg_date > end_utc:
+                    return False
+
+                # Skip non-text messages
+                if not message.text:
+                    return False
+
+                # Filter by topic if specified
+                if topic_filter is not None:
+                    # Get topic ID from message (reply_to contains topic info in forums)
+                    msg_topic_id = None
+                    if hasattr(message, 'reply_to') and message.reply_to:
+                        # In forums, reply_to_top_id is the topic ID
+                        msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+                        if msg_topic_id is None:
+                            msg_topic_id = getattr(message.reply_to, 'reply_to_msg_id', None)
+
+                    # Messages in General topic have no reply_to, but topic ID is 1
+                    if msg_topic_id is None:
+                        msg_topic_id = 1
+
+                    if msg_topic_id not in topic_filter:
+                        return False
+
+                sender_name = 'Unknown'
+                sender_id = message.sender_id or 0
+                sender_username = None
+
+                if message.sender:
+                    if isinstance(message.sender, User):
+                        sender_username = message.sender.username
+                        sender_name = ' '.join(filter(None, [
+                            message.sender.first_name,
+                            message.sender.last_name
+                        ])) or message.sender.username or 'User'
+                    else:
+                        sender_name = getattr(message.sender, 'title', 'Unknown')
+
+                # Get topic ID for reference
+                msg_topic_id = None
+                if hasattr(message, 'reply_to') and message.reply_to:
+                    msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
+
+                messages_by_id[message.id] = {
+                    'message_id': message.id,
+                    'sender_id': sender_id,
+                    'sender_name': sender_name,
+                    'sender_username': sender_username,
+                    'text': message.text,
+                    'date': msg_date.isoformat().replace('+00:00', 'Z'),
+                    'reply_to': message.reply_to_msg_id,
+                    'topic_id': msg_topic_id
+                }
+                return True
 
             async def fetch_messages():
-                nonlocal messages
                 async for message in client.iter_messages(
                         chat_telegram_id,
-                        offset_date=end_naive,
+                        # offset_date is exclusive, so add one second to retain
+                        # messages stamped exactly at the selected boundary.
+                        offset_date=end_utc + timedelta(seconds=1),
                         reverse=False,
                         limit=limit
                 ):
-                    msg_date = message.date.replace(tzinfo=None)
+                    msg_date = self._telegram_datetime_to_utc(message.date)
 
-                    if msg_date < start_naive:
+                    if msg_date < start_utc:
                         break
+                    include_message(message)
 
-                    if msg_date > end_naive:
-                        continue
-
-                    # Skip non-text messages
-                    if not message.text:
-                        continue
-
-                    # Filter by topic if specified
-                    if topic_filter is not None:
-                        # Get topic ID from message (reply_to contains topic info in forums)
-                        msg_topic_id = None
-                        if hasattr(message, 'reply_to') and message.reply_to:
-                            # In forums, reply_to_top_id is the topic ID
-                            msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
-                            if msg_topic_id is None:
-                                msg_topic_id = getattr(message.reply_to, 'reply_to_msg_id', None)
-
-                        # Messages in General topic have no reply_to, but topic ID is 1
-                        if msg_topic_id is None:
-                            msg_topic_id = 1  # General topic
-
-                        if msg_topic_id not in topic_filter:
-                            continue
-
-                    sender_name = 'Unknown'
-                    sender_id = message.sender_id or 0
-                    sender_username = None
-
-                    if message.sender:
-                        if isinstance(message.sender, User):
-                            sender_username = message.sender.username
-                            sender_name = ' '.join(filter(None, [
-                                message.sender.first_name,
-                                message.sender.last_name
-                            ])) or message.sender.username or 'User'
-                        else:
-                            sender_name = getattr(message.sender, 'title', 'Unknown')
-
-                    # Get topic ID for reference
-                    msg_topic_id = None
-                    if hasattr(message, 'reply_to') and message.reply_to:
-                        msg_topic_id = getattr(message.reply_to, 'reply_to_top_id', None)
-
-                    messages.append({
-                        'message_id': message.id,
-                        'sender_id': sender_id,
-                        'sender_name': sender_name,
-                        'sender_username': sender_username,
-                        'text': message.text,
-                        'date': msg_date.isoformat() + 'Z',
-                        'reply_to': message.reply_to_msg_id,
-                        'topic_id': msg_topic_id
-                    })
+                # For a live period, issue a second newest-first request without
+                # offset_date. This reconciles Telegram's freshest page and
+                # prevents messages arriving near the report boundary from being
+                # absent in the snapshot passed to AI.
+                now_utc = datetime.now(UTC)
+                if -timedelta(minutes=2) <= now_utc - end_utc <= LIVE_TAIL_AGE:
+                    tail_start = max(start_utc, end_utc - LIVE_TAIL_WINDOW)
+                    before_tail = len(messages_by_id)
+                    async for message in client.iter_messages(
+                            chat_telegram_id,
+                            reverse=False,
+                            limit=LIVE_TAIL_LIMIT,
+                    ):
+                        msg_date = self._telegram_datetime_to_utc(message.date)
+                        if msg_date < tail_start:
+                            break
+                        include_message(message)
+                    recovered = len(messages_by_id) - before_tail
+                    if recovered:
+                        print(
+                            f"[get_messages] Recovered {recovered} messages from live tail",
+                            flush=True,
+                        )
 
             try:
                 await asyncio.wait_for(fetch_messages(), timeout=per_attempt_timeout)
+                messages = sorted(messages_by_id.values(), key=lambda item: item['date'])
                 print(f"[get_messages] Found {len(messages)} messages", flush=True)
-                return list(reversed(messages))
+                return messages
 
             except asyncio.TimeoutError as e:
                 last_error = e
                 print(
                     f"[get_messages] Timeout after {per_attempt_timeout}s "
-                    f"(attempt {attempt + 1}/{max_fetch_attempts}), got {len(messages)} messages so far",
+                    f"(attempt {attempt + 1}/{max_fetch_attempts}), got {len(messages_by_id)} messages so far",
                     flush=True
                 )
-                if messages:
-                    return list(reversed(messages))
+                if messages_by_id:
+                    return sorted(messages_by_id.values(), key=lambda item: item['date'])
                 if attempt < max_fetch_attempts - 1:
                     await self._reset_client_after_fetch_failure(account_id, client)
                     continue
@@ -537,8 +578,8 @@ class TelegramClientManager:
                     f"[get_messages] Connection error (attempt {attempt + 1}/{max_fetch_attempts}): {e}",
                     flush=True
                 )
-                if messages:
-                    return list(reversed(messages))
+                if messages_by_id:
+                    return sorted(messages_by_id.values(), key=lambda item: item['date'])
                 if attempt < max_fetch_attempts - 1:
                     await self._reset_client_after_fetch_failure(account_id, client)
                     continue
@@ -551,8 +592,8 @@ class TelegramClientManager:
                         f"(attempt {attempt + 1}/{max_fetch_attempts}): {e}",
                         flush=True
                     )
-                    if messages:
-                        return list(reversed(messages))
+                    if messages_by_id:
+                        return sorted(messages_by_id.values(), key=lambda item: item['date'])
                     if attempt < max_fetch_attempts - 1:
                         await self._reset_client_after_fetch_failure(account_id, client)
                         continue
@@ -561,8 +602,8 @@ class TelegramClientManager:
                     f"[get_messages] Error fetching messages: {e}\n"
                     f"[get_messages] Context: account_id={account_id}, "
                     f"chat={chat_telegram_id!r} ({type(chat_telegram_id).__name__}), "
-                    f"start={start_naive!r}, end={end_naive!r}, "
-                    f"topic_ids={topic_ids!r}, fetched_so_far={len(messages)}",
+                    f"start={start_utc!r}, end={end_utc!r}, "
+                    f"topic_ids={topic_ids!r}, fetched_so_far={len(messages_by_id)}",
                     flush=True
                 )
                 traceback.print_exc()
@@ -571,6 +612,20 @@ class TelegramClientManager:
         if last_error:
             print(f"[get_messages] Giving up after {max_fetch_attempts} attempts: {last_error}", flush=True)
         return []
+
+    @staticmethod
+    def _report_datetime_to_utc(value: datetime) -> datetime:
+        """Interpret naive UI values in the configured report timezone."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=REPORT_TIMEZONE)
+        return value.astimezone(UTC)
+
+    @staticmethod
+    def _telegram_datetime_to_utc(value: datetime) -> datetime:
+        """Normalize Telethon timestamps, whose naive form is always UTC."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     async def close_all(self):
         """Close all client connections"""

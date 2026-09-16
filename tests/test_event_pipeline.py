@@ -101,6 +101,25 @@ class EvidenceValidationTests(unittest.TestCase):
         ]
         self.assertEqual(derive_action_stage(unrelated_time_and_place, "telegram"), "none")
 
+    def test_tents_and_media_are_grounded_as_offline_action_suggestion(self):
+        messages = [
+            message(10, 1, "Пора палатки ставить возле офиса Самолёт и вызывать СМИ"),
+            message(11, 2, "Кто готов ночевать в палатках у корпуса?"),
+        ]
+
+        self.assertEqual(derive_action_stage(messages, "telegram"), "suggestion")
+        self.assertTrue(chat_needs_verification(messages, []))
+
+        event = validate_event(
+            raw_event([10, 11], action_stage="none"),
+            messages,
+            "Остафьево – корпус 19",
+            "telegram",
+        )
+        self.assertEqual(event["action_stage"], "suggestion")
+        self.assertIn("media", event["risk_flags"])
+        self.assertIn("offline_action", event["risk_flags"])
+
     def test_model_event_key_cannot_be_used_as_raw_database_key(self):
         event = validate_event(
             raw_event([1], event_key="generic"),

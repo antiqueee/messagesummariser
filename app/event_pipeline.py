@@ -43,7 +43,8 @@ RISK_FLAGS = {
 }
 
 RISK_TEXT_RE = re.compile(
-    r"(?:угрож|расправ|подж|сломаем|взлом|перекро|митинг|пикет|собер[её]мся|"
+    r"(?:угрож|расправ|подж|сломаем|взлом|перекро|митинг|пикет|палатк|ночев|"
+    r"кто\s+готов|собер[её]мся|"
     r"встреча|акци[яю]|коллективн|подпис[ьи]|петици|сбор\s+(?:контакт|телефон|"
     r"данн)|пришлите\s+(?:номер|телефон|контакт)|прокуратур|следственн(?:ый|ого)"
     r"|депутат|суд|юрист|жалоб|претензи|сми|телеканал|журналист|президент|"
@@ -51,13 +52,15 @@ RISK_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 SUGGESTION_RE = re.compile(
-    r"(?:давайте|предлагаю|надо|нужно|может)\b.{0,100}(?:собра|встрет|напи|"
-    r"пода|отправ|обрат|позвон|пойти|поехать|вызва)",
+    r"(?:(?:давайте|предлагаю|надо|нужно|может|пора)\b.{0,120}(?:собра|встрет|"
+    r"напи|пода|отправ|обрат|позвон|пойти|поехать|вызва|став|ночев|палат)|"
+    r"(?:кто\s+(?:готов|согласен))\b.{0,120}(?:собра|встрет|пойти|поехать|"
+    r"ночев|палат|участв))",
     re.IGNORECASE | re.DOTALL,
 )
 ACTION_CONTEXT_RE = re.compile(
     r"(?:собра|встрет|жалоб|петици|подпис|прокуратур|суд|сми|администрац|"
-    r"застройщик|управляющ|ук\b|мчс|полици)",
+    r"застройщик|управляющ|ук\b|мчс|полици|палатк|ночев)",
     re.IGNORECASE,
 )
 SUPPORT_RE = re.compile(
@@ -320,6 +323,10 @@ def validate_event(raw_event: dict, messages: list[dict], chat_name: str, source
             flags.add("threat")
         if re.search(r"жалоб|прокуратур|суд|претензи|обрати", source_text, re.IGNORECASE):
             flags.add("complaint")
+        if re.search(r"сми|телеканал|журналист", source_text, re.IGNORECASE):
+            flags.add("media")
+        if re.search(r"палатк|ночев", source_text, re.IGNORECASE):
+            flags.add("offline_action")
     if action_stage in {"collecting_contacts", "scheduled", "occurred"}:
         flags.add("organized_action")
     if action_stage == "collecting_contacts":
