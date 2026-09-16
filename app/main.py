@@ -1203,7 +1203,10 @@ async def _generate_report_payload(
                 complex_data['analysis_warnings'] = pipeline_result.get('analysis_warnings') or []
                 await db.upsert_event_memory(
                     complex_id=complex_id,
-                    events=pipeline_result['events'],
+                    events=[
+                        event for event in pipeline_result['events']
+                        if event.get('event_type') != 'source_fallback_context'
+                    ],
                     period_start=start_date.isoformat(),
                     period_end=end_date.isoformat(),
                 )

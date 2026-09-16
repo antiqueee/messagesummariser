@@ -15,6 +15,7 @@ from app.event_pipeline import (
     merge_complex_events,
     merge_independent_review,
     sheet_rows_from_events,
+    source_fallback_events,
     validate_event,
 )
 from app.summarizer import ChatSummarizer
@@ -195,6 +196,44 @@ class EvidenceValidationTests(unittest.TestCase):
         self.assertEqual(rows[0]["chat"], "КОРПУС 1")
         self.assertEqual(rows[1]["background_topics"], "За этот день нет сообщений")
 
+    def test_source_fallback_keeps_failed_chat_grounded_in_real_messages(self):
+        messages = [
+            message(1, 1, "Менеджер снова перенёс срок выдачи ключей"),
+            message(2, 2, "Подали коллективную жалобу в прокуратуру"),
+        ]
+
+        events = source_fallback_events(messages, "Корпус 5", "telegram")
+
+        self.assertTrue(events)
+        self.assertTrue(all(event["verification_status"] == "source_fallback" for event in events))
+        evidence_ids = {
+            item["message_id"]
+            for event in events
+            for item in event["evidence"]
+        }
+        self.assertEqual(evidence_ids, {"1", "2"})
+
+    def test_source_fallback_preserves_unclassified_chat_context(self):
+        events = source_fallback_events(
+            [message(7, 1, "Кто-нибудь сегодня будет во дворе?")],
+            "Соседи",
+            "telegram",
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "source_fallback_context")
+        self.assertEqual(events[0]["evidence"][0]["message_id"], "7")
+
+    def test_source_fallback_keeps_attachment_only_messages_visible(self):
+        attachment = message(8, 1, "")
+        attachment["attachments"] = [{"type": "photo"}]
+
+        events = source_fallback_events([attachment], "Корпус 2", "telegram")
+
+        self.assertEqual(len(events), 1)
+        self.assertIn("без доступного текста", events[0]["summary"])
+        self.assertEqual(events[0]["evidence"][0]["message_id"], "8")
+
 
 class SelectiveVerifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_calm_chat_does_not_call_luna(self):
@@ -276,7 +315,7 @@ class SelectiveVerifierTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("ОСОБОЕ ПРАВИЛО ЗАКАЗЧИКА", prompts[0])
 
-    async def test_both_analyzers_failing_returns_partial_report_with_warning(self):
+    async def test_both_analyzers_failing_uses_source_grounded_fallback(self):
         summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
 
         async def failed_call(
@@ -297,8 +336,10 @@ class SelectiveVerifierTests(unittest.IsolatedAsyncioTestCase):
             end_date=datetime(2026, 9, 14, 23, 59),
         )
 
-        self.assertIn("не удалось надёжно проанализировать", result["summary_text"])
-        self.assertEqual(result["analysis_warnings"][0]["kind"], "chat_not_analyzed")
+        self.assertNotIn("не вошли в сводку", result["summary_text"])
+        self.assertEqual(result["analysis_warnings"][0]["kind"], "source_fallback")
+        self.assertEqual(result["events"][0]["verification_status"], "source_fallback")
+        self.assertEqual(result["events"][0]["evidence"][0]["message_id"], "1")
 
 
 class VerifierFallbackTests(unittest.IsolatedAsyncioTestCase):

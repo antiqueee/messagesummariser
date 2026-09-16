@@ -89,6 +89,70 @@ OCCURRED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# This last-resort classifier is intentionally conservative and source-grounded.
+# It is used only when every approved ZDR model route failed. Its purpose is to
+# keep a chat visible without inventing a narrative: the final card contains
+# real message IDs and representative source fragments.
+FALLBACK_TOPIC_RULES = (
+    (
+        "construction",
+        "строительство, сроки, приёмка и ключи",
+        re.compile(
+            r"(?:стройк|строител|срок|сдач|перенос|ключ|заселен|при[её]мк|"
+            r"\bакт(?:а|е|ом|ы|ов)?\b|дду\b|эскроу|отделк|росимуществ|уступк|кадастр)",
+            re.IGNORECASE,
+        ),
+        "medium",
+        (),
+    ),
+    (
+        "building_issue",
+        "дефекты, инженерные системы и безопасность",
+        re.compile(
+            r"(?:лифт|протеч|затоп|плесен|трещин|пожар|авари|обруш|"
+            r"вентиляц|отоплен|электрич|водоснаб|канализац|охран|домофон|"
+            r"доступ|двер|вибрац|не\s+работа|сломал|поломк)",
+            re.IGNORECASE,
+        ),
+        "medium",
+        ("safety",),
+    ),
+    (
+        "management_problem",
+        "работа УК, обслуживание, коммунальные услуги и платежи",
+        re.compile(
+            r"(?:\bук\b|управляющ|коммунал|тариф|плат[её]ж|квитанц|уборк|"
+            r"мусор|диспетчер|обслужив|начислен|охрана)",
+            re.IGNORECASE,
+        ),
+        "low",
+        (),
+    ),
+    (
+        "legal_or_collective_action",
+        "жалобы, юридические или коллективные действия",
+        re.compile(
+            r"(?:жалоб|претензи|суд|\bиск(?:а|у|ом|и|ов)?\b|юрист|прокуратур|полици|мчс|"
+            r"депутат|администрац|петици|подпис|сми|журналист|собрани|"
+            r"встреч|митинг|пикет|коллективн|контакт)",
+            re.IGNORECASE,
+        ),
+        "medium",
+        ("complaint", "legal"),
+    ),
+    (
+        "developer_issue",
+        "обращения и претензии к застройщику",
+        re.compile(
+            r"(?:застройщик|самол[её]т|менеджер|отдел\s+засел|офис\s+продаж|"
+            r"горячая\s+линия|обещал|не\s+отвеча|не\s+дозвон)",
+            re.IGNORECASE,
+        ),
+        "medium",
+        ("complaint",),
+    ),
+)
+
 
 def parse_json_response(raw: str) -> Any:
     """Parse JSON even when a provider wraps it in a Markdown fence."""
@@ -294,6 +358,167 @@ def validate_event(raw_event: dict, messages: list[dict], chat_name: str, source
         "title": model_event_key or event["title"],
     })
     return event
+
+
+def _representative_messages(messages: list[dict], limit: int = 18) -> list[dict]:
+    """Choose an even timeline sample while retaining risk-bearing messages."""
+    usable = [
+        item for item in messages
+        if message_id(item) and str(item.get("text") or "").strip()
+    ]
+    if len(usable) <= limit:
+        return usable
+
+    risky = [item for item in usable if RISK_TEXT_RE.search(str(item.get("text") or ""))]
+    selected = {message_id(item): item for item in risky[-limit:]}
+    remaining = max(0, limit - len(selected))
+    if remaining:
+        if remaining == 1:
+            indexes = [len(usable) - 1]
+        else:
+            indexes = [
+                round(index * (len(usable) - 1) / (remaining - 1))
+                for index in range(remaining)
+            ]
+        for index in indexes:
+            selected.setdefault(message_id(usable[index]), usable[index])
+
+    order = {message_id(item): index for index, item in enumerate(usable)}
+    return sorted(selected.values(), key=lambda item: order[message_id(item)])[:limit]
+
+
+def _fallback_details(messages: list[dict], total_matches: int) -> str:
+    excerpts = [
+        f"«{_actual_quote(item, 220)}»"
+        for item in _representative_messages(messages, limit=5)
+    ]
+    return (
+        f"Найдено сообщений по теме: {total_matches}. "
+        "Проверяемые фрагменты: " + "; ".join(excerpts)
+    )
+
+
+def source_fallback_events(messages: list[dict], chat_name: str, source: str) -> list[dict]:
+    """Build auditable event cards when all approved model routes are unavailable.
+
+    The fallback never claims an inferred incident. It reports detected subject
+    areas and carries exact source evidence so the chat remains visible in the
+    report, Sheets export and audit trail.
+    """
+    grounded_messages = [item for item in messages if message_id(item)]
+    usable = [
+        item for item in messages
+        if message_id(item) and str(item.get("text") or "").strip()
+    ]
+    if not grounded_messages:
+        return []
+
+    if not usable:
+        selected = grounded_messages[-18:]
+        selected_ids = [message_id(item) for item in selected]
+        raw_event = {
+            "memory_id": None,
+            "event_key": f"source-fallback:{chat_name}:attachments",
+            "event_type": "source_fallback_context",
+            "title": f"Резервный разбор чата «{chat_name}»",
+            "summary": (
+                f"В чате «{chat_name}» было {len(grounded_messages)} сообщений без доступного текста. "
+                "Они учтены в покрытии сводки, но их содержимое нельзя надёжно классифицировать автоматически."
+            ),
+            "details": "Сохранены реальные идентификаторы сообщений за выбранный период.",
+            "target": "",
+            "location": chat_name,
+            "severity": "low",
+            "confidence": 0.1,
+            "action_stage": "none",
+            "state": "new",
+            "risk_flags": [],
+            "related_message_ids": selected_ids,
+            "evidence": [{"message_id": mid, "quote": ""} for mid in selected_ids],
+        }
+        event = validate_event(raw_event, messages, chat_name, source)
+        if not event:
+            return []
+        event["verification_status"] = "source_fallback"
+        event["fallback_generated"] = True
+        return [event]
+
+    events = []
+    covered_ids: set[str] = set()
+    for event_type, label, pattern, severity, flags in FALLBACK_TOPIC_RULES:
+        matched = [
+            item for item in usable
+            if message_id(item) not in covered_ids
+            and pattern.search(str(item.get("text") or ""))
+        ]
+        if not matched:
+            continue
+        covered_ids.update(message_id(item) for item in matched)
+        selected = _representative_messages(matched, limit=18)
+        selected_ids = [message_id(item) for item in selected]
+        raw_event = {
+            "memory_id": None,
+            "event_key": f"source-fallback:{chat_name}:{event_type}",
+            "event_type": event_type,
+            "title": f"Резервный разбор: {label}",
+            "summary": (
+                f"В чате «{chat_name}» исходные сообщения затрагивают тему: {label}. "
+                "Карточка сформирована резервным анализом без модельной интерпретации."
+            ),
+            "details": _fallback_details(selected, len(matched)),
+            "target": "",
+            "location": chat_name,
+            "severity": severity,
+            "confidence": 0.35,
+            "action_stage": "none",
+            "state": "new",
+            "risk_flags": list(flags),
+            "related_message_ids": selected_ids,
+            "evidence": [{"message_id": mid, "quote": ""} for mid in selected_ids],
+        }
+        event = validate_event(raw_event, messages, chat_name, source)
+        if event:
+            event["verification_status"] = "source_fallback"
+            event["fallback_generated"] = True
+            events.append(event)
+
+    # If no known topic matched, preserve a representative timeline sample.
+    # This is preferable to claiming that the chat was analysed or had no
+    # significant events when all model providers were unavailable.
+    if not events:
+        selected = _representative_messages(usable, limit=18)
+        selected_ids = [message_id(item) for item in selected]
+        raw_event = {
+            "memory_id": None,
+            "event_key": f"source-fallback:{chat_name}:unclassified",
+            "event_type": "source_fallback_context",
+            "title": f"Резервный разбор чата «{chat_name}»",
+            "summary": (
+                f"В чате «{chat_name}» было {len(usable)} сообщений. "
+                "Основные модели были недоступны, поэтому в сводку включена "
+                "репрезентативная выборка исходных сообщений без домыслов."
+            ),
+            "details": (
+                "Тема автоматически не классифицирована. "
+                + _fallback_details(selected, len(usable))
+            ),
+            "target": "",
+            "location": chat_name,
+            "severity": "low",
+            "confidence": 0.2,
+            "action_stage": "none",
+            "state": "new",
+            "risk_flags": [],
+            "related_message_ids": selected_ids,
+            "evidence": [{"message_id": mid, "quote": ""} for mid in selected_ids],
+        }
+        event = validate_event(raw_event, messages, chat_name, source)
+        if event:
+            event["verification_status"] = "source_fallback"
+            event["fallback_generated"] = True
+            events.append(event)
+
+    return events
 
 
 def ground_memory_reference(event: dict, memory_events: list[dict]) -> dict:
@@ -507,7 +732,10 @@ def fallback_report(complex_name: str, events: list[dict]) -> str:
     lines = []
     for event in events:
         sentence = event.get("summary") or event.get("title") or "Зафиксировано событие."
-        if event.get("details") and event.get("severity") in {"high", "critical"}:
+        if event.get("details") and (
+            event.get("severity") in {"high", "critical"}
+            or event.get("verification_status") == "source_fallback"
+        ):
             sentence = f"{sentence} {event['details']}"
         lines.append(sentence.strip())
     return "\n".join(lines)
