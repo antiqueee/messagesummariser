@@ -472,6 +472,86 @@ class VerifierFallbackTests(unittest.IsolatedAsyncioTestCase):
             ["openai/gpt-5.6-luna-pro", "qwen/qwen3.8-flash"],
         )
 
+    async def test_security_policy_error_moves_to_approved_fallback(self):
+        summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
+        requested_models = []
+
+        class FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, headers, content):
+                model = json.loads(content)["model"]
+                requested_models.append(model)
+                if model == "google/gemini-3.1-pro-preview":
+                    return FakeResponse(403, {
+                        "error": {"message": "Access denied by security policy."},
+                    })
+                return FakeResponse(200, {
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "Готовая сводка"},
+                    }],
+                })
+
+        with patch("app.summarizer.httpx.AsyncClient", FakeClient):
+            result = await summarizer._call_api(
+                "test",
+                model_override="google/gemini-3.1-pro-preview",
+                model_fallbacks=["google/gemini-3.8-flash"],
+                purpose="weekly_report",
+            )
+
+        self.assertEqual(result, "Готовая сводка")
+        self.assertEqual(
+            requested_models,
+            ["google/gemini-3.1-pro-preview", "google/gemini-3.8-flash"],
+        )
+
+    async def test_weekly_summary_uses_configured_fallbacks(self):
+        summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
+        calls = []
+
+        async def fake_call(
+                prompt, model_override=None, model_fallbacks=None,
+                response_schema=None, purpose="unknown",
+        ):
+            calls.append((model_override, model_fallbacks, purpose))
+            return "Готовая недельная сводка"
+
+        summarizer._call_api = fake_call
+        result = await summarizer.summarize_weekly_complex(
+            complex_name="Тестовый ЖК",
+            weekly_rows=[{"date": "21.09.2026", "chat": "Общий чат"}],
+            start_date=datetime(2026, 9, 21),
+            end_date=datetime(2026, 9, 27),
+            model="google/gemini-3.1-pro-preview",
+        )
+
+        self.assertEqual(result, "Готовая недельная сводка")
+        self.assertEqual(
+            calls,
+            [(
+                "google/gemini-3.1-pro-preview",
+                ["google/gemini-3.8-flash"],
+                "weekly_report",
+            )],
+        )
+
 
 class EventMemoryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

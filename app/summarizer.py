@@ -475,6 +475,7 @@ class ChatSummarizer:
     DEFAULT_MODEL = "google/gemini-3.8-flash"
     DEFAULT_VERIFIER_MODEL = "openai/gpt-5.6-luna-pro"
     DEFAULT_VERIFIER_FALLBACK_MODELS = ["qwen/qwen3.8-flash"]
+    DEFAULT_WEEKLY_FALLBACK_MODELS = ["google/gemini-3.8-flash"]
     # Deliberate, same-family fallbacks only. Never auto-select an arbitrary
     # model because that would silently change report behaviour.
     FALLBACK_MODELS = [
@@ -504,6 +505,12 @@ class ChatSummarizer:
             [item.strip() for item in configured_verifier_fallbacks.split(",") if item.strip()]
             if configured_verifier_fallbacks
             else list(self.DEFAULT_VERIFIER_FALLBACK_MODELS)
+        )
+        configured_weekly_fallbacks = os.getenv("AI_WEEKLY_FALLBACK_MODELS", "").strip()
+        self.weekly_fallback_models = (
+            [item.strip() for item in configured_weekly_fallbacks.split(",") if item.strip()]
+            if configured_weekly_fallbacks
+            else list(self.DEFAULT_WEEKLY_FALLBACK_MODELS)
         )
         configured_fallbacks = os.getenv("AI_FALLBACK_MODELS", "").strip()
         self.fallback_models = (
@@ -967,7 +974,7 @@ class ChatSummarizer:
 
         request_timeout = self._request_timeout_for(purpose)
         async with httpx.AsyncClient(timeout=request_timeout) as client:
-            for model_attempt in models_to_try:
+            for model_index, model_attempt in enumerate(models_to_try):
                 attempt_payload = dict(payload)
                 attempt_payload["model"] = model_attempt
                 attempt_payload["max_completion_tokens"] = (
@@ -1069,6 +1076,13 @@ class ChatSummarizer:
                     print(f"[API] Error with {model_attempt}: {error_msg} (retryable={retryable})", flush=True)
                     last_error = error_msg
                     if not retryable:
+                        if model_index < len(models_to_try) - 1:
+                            print(
+                                f"[API] Moving to approved fallback after non-retryable "
+                                f"error from {model_attempt}",
+                                flush=True,
+                            )
+                            break
                         raise Exception(f"OpenRouter API error: {error_msg}")
                     if attempt < attempts:
                         await asyncio.sleep(2)
@@ -1320,7 +1334,12 @@ class ChatSummarizer:
             end_date=end_date.strftime('%d.%m.%Y'),
             weekly_rows=self._format_weekly_rows(weekly_rows),
         )
-        return await self._call_api(prompt, model_override=model, purpose="weekly_report")
+        return await self._call_api(
+            prompt,
+            model_override=model,
+            model_fallbacks=self.weekly_fallback_models,
+            purpose="weekly_report",
+        )
 
     async def summarize_chat(
             self,
