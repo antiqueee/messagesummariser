@@ -346,7 +346,18 @@ class TelegramClientManager:
 
                     await self._safe_disconnect(client)
 
-                    # Try next proxy
+                    # Even when regular message collection is configured for a
+                    # direct connection, authorization may be selectively
+                    # blocked by Telegram/the ISP. Fall back to a healthy proxy
+                    # only for the remaining login attempts.
+                    if pm is None:
+                        pm = get_proxy_manager()
+                        next_proxy = await pm.get_best_proxy()
+                        if next_proxy:
+                            print(f"[Auth] Direct connection failed; trying {next_proxy}", flush=True)
+                            continue
+
+                    # Try next proxy.
                     if pm:
                         next_proxy = await pm.get_next_proxy()
                         if next_proxy:
