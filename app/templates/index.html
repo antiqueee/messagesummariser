@@ -1762,6 +1762,7 @@
             </div>
             <div class="input-group">
                 <button class="btn btn-primary" onclick="verifyAuth()">Подтвердить</button>
+                <button class="btn btn-secondary" id="auth-resend-btn" onclick="resendAuth()">Запросить код повторно</button>
                 <button class="btn btn-secondary" onclick="closeModal('auth-modal')">Отмена</button>
             </div>
         </div>
@@ -1963,6 +1964,7 @@
 
     <script>
         let currentAuthAccountId = null;
+        let authResendTimer = null;
         let currentMaxAuthAccountId = null;
 
         // Tab switching
@@ -2190,14 +2192,78 @@
             currentAuthAccountId = accountId;
             try {
                 const result = await api(`/api/accounts/${accountId}/auth/start`, 'POST');
-                document.getElementById('auth-message').textContent =
-                    'Код отправлен в Telegram. Введите его ниже:';
+                updateTelegramAuthDelivery(result, false);
                 document.getElementById('auth-code').value = '';
                 document.getElementById('auth-password').value = '';
                 document.getElementById('auth-password-group').style.display = 'none';
                 showModal('auth-modal');
             } catch (e) {
                 alert('Ошибка: ' + e.message);
+            }
+        }
+
+        function telegramDeliveryLabel(type) {
+            const labels = {
+                app: 'служебный чат Telegram на уже авторизованном устройстве',
+                sms: 'SMS',
+                call: 'телефонный звонок',
+                flash_call: 'короткий проверочный звонок',
+                missed_call: 'пропущенный звонок',
+                fragment_sms: 'Fragment SMS',
+                email_code: 'электронную почту'
+            };
+            return labels[type] || 'Telegram';
+        }
+
+        function updateTelegramAuthDelivery(result, resent) {
+            const current = telegramDeliveryLabel(result.delivery_type);
+            const next = result.next_delivery_type
+                ? ` Следующий доступный способ: ${telegramDeliveryLabel(result.next_delivery_type)}.`
+                : '';
+            document.getElementById('auth-message').textContent =
+                `${resent ? 'Повторный запрос выполнен.' : (result.request_pending ? 'Код уже был запрошен.' : 'Код запрошен.')} ` +
+                `Telegram выбрал доставку через ${current}.${next}` +
+                (result.next_delivery_type ? '' : ' Другой способ доставки сейчас не предложен.');
+
+            const button = document.getElementById('auth-resend-btn');
+            button.style.display = result.next_delivery_type ? '' : 'none';
+            if (authResendTimer) clearInterval(authResendTimer);
+            let seconds = Number(result.resend_available_in || 0);
+            const render = () => {
+                button.disabled = seconds > 0;
+                button.textContent = seconds > 0
+                    ? `Повторить через ${seconds} сек.`
+                    : 'Запросить код повторно';
+            };
+            render();
+            if (seconds > 0) {
+                authResendTimer = setInterval(() => {
+                    seconds -= 1;
+                    render();
+                    if (seconds <= 0) {
+                        clearInterval(authResendTimer);
+                        authResendTimer = null;
+                    }
+                }, 1000);
+            }
+        }
+
+        async function resendAuth() {
+            if (!currentAuthAccountId) return;
+            const button = document.getElementById('auth-resend-btn');
+            button.disabled = true;
+            try {
+                const result = await api(
+                    `/api/accounts/${currentAuthAccountId}/auth/resend`,
+                    'POST'
+                );
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Повторная отправка не удалась');
+                }
+                updateTelegramAuthDelivery(result, true);
+            } catch (e) {
+                button.disabled = false;
+                alert('Ошибка повторной отправки: ' + e.message);
             }
         }
 

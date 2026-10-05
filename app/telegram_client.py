@@ -9,7 +9,11 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import User, Chat, Channel, Message, ForumTopic
 from telethon.tl.functions.channels import GetForumTopicsRequest
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+from telethon.errors import (
+    SessionPasswordNeededError,
+    PhoneCodeInvalidError,
+    SendCodeUnavailableError,
+)
 
 from .proxy_manager import get_proxy_manager, ProxyConfig
 
@@ -58,6 +62,84 @@ class TelegramClientManager:
         if account_id not in self._operation_locks:
             self._operation_locks[account_id] = asyncio.Lock()
         return self._operation_locks[account_id]
+
+    @staticmethod
+    def _auth_delivery_payload(result) -> dict:
+        """Expose Telegram's actual code delivery route to the UI."""
+        def normalize(value) -> str | None:
+            if value is None:
+                return None
+            name = type(value).__name__
+            prefix = "SentCodeType"
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+            aliases = {
+                "App": "app",
+                "Sms": "sms",
+                "Call": "call",
+                "FlashCall": "flash_call",
+                "MissedCall": "missed_call",
+                "FragmentSms": "fragment_sms",
+                "EmailCode": "email_code",
+                "SetUpEmailRequired": "email_setup_required",
+                "FirebaseSms": "firebase_sms",
+            }
+            return aliases.get(name, name.lower())
+
+        delivery_type = normalize(getattr(result, "type", None)) or "unknown"
+        next_type = normalize(getattr(result, "next_type", None))
+        try:
+            timeout = max(0, int(getattr(result, "timeout", 0) or 0))
+        except (TypeError, ValueError):
+            timeout = 0
+        return {
+            "delivery_type": delivery_type,
+            "next_delivery_type": next_type,
+            "resend_available_in": timeout,
+        }
+
+    async def _resend_auth_unlocked(self, account_id: int) -> dict:
+        auth_data = self._pending_auth.get(account_id)
+        if not auth_data:
+            return {
+                "status": "error",
+                "message": "Сначала запросите код авторизации заново",
+            }
+
+        client = auth_data["client"]
+        if not client.is_connected():
+            await asyncio.wait_for(client.connect(), timeout=30)
+
+        # Telethon retains the first phone_code_hash on this exact client.
+        # Calling send_code_request again therefore issues ResendCodeRequest
+        # instead of repeating a fresh SendCodeRequest with the same hash.
+        try:
+            result = await client.send_code_request(auth_data["phone"])
+        except SendCodeUnavailableError:
+            return {
+                "status": "error",
+                "error_code": "delivery_unavailable",
+                "message": (
+                    "Telegram пока не разрешает повторную отправку: все доступные "
+                    "способы доставки для этого номера уже использованы. Не запрашивайте "
+                    "код несколько раз подряд; попробуйте снова позже."
+                ),
+            }
+        auth_data["phone_code_hash"] = result.phone_code_hash
+        delivery = self._auth_delivery_payload(result)
+        auth_data["delivery"] = delivery
+        print(
+            f"[Auth] Code resent for account {account_id}: "
+            f"delivery={delivery['delivery_type']}, "
+            f"next={delivery['next_delivery_type']}, "
+            f"timeout={delivery['resend_available_in']}",
+            flush=True,
+        )
+        return {
+            "status": "code_required",
+            "phone_code_hash": result.phone_code_hash,
+            **delivery,
+        }
 
     def _is_transient_fetch_error(self, error: Exception) -> bool:
         """Detect Telethon/network failures that require a fresh connection."""
@@ -202,6 +284,21 @@ class TelegramClientManager:
             session_path = self._get_session_path(account_id)
             print(f"[Auth] Starting auth for account {account_id}, phone: {phone}")
 
+            if account_id in self._pending_auth:
+                # Re-opening the login dialog must not consume Telegram's next
+                # delivery attempt. Resending is an explicit separate action.
+                auth_data = self._pending_auth[account_id]
+                return {
+                    "status": "code_required",
+                    "phone_code_hash": auth_data["phone_code_hash"],
+                    "request_pending": True,
+                    **auth_data.get("delivery", {
+                        "delivery_type": "app",
+                        "next_delivery_type": None,
+                        "resend_available_in": 0,
+                    }),
+                }
+
             # Initialize proxy on first connection attempt
             if self.use_proxy:
                 await self._ensure_proxy_initialized()
@@ -220,14 +317,26 @@ class TelegramClientManager:
 
                     result = await client.send_code_request(phone)
                     print(f"[Auth] Code sent! Type: {result.type}, phone_code_hash: {result.phone_code_hash[:10]}...")
+                    delivery = self._auth_delivery_payload(result)
 
                     self._pending_auth[account_id] = {
                         'client': client,
                         'phone': phone,
-                        'phone_code_hash': result.phone_code_hash
+                        'phone_code_hash': result.phone_code_hash,
+                        'delivery': delivery,
                     }
-
-                    return {'status': 'code_required', 'phone_code_hash': result.phone_code_hash}
+                    print(
+                        f"[Auth] Delivery for account {account_id}: "
+                        f"current={delivery['delivery_type']}, "
+                        f"next={delivery['next_delivery_type']}, "
+                        f"timeout={delivery['resend_available_in']}",
+                        flush=True,
+                    )
+                    return {
+                        'status': 'code_required',
+                        'phone_code_hash': result.phone_code_hash,
+                        **delivery,
+                    }
 
                 except CONNECTION_ERRORS as e:
                     last_error = e
@@ -255,6 +364,11 @@ class TelegramClientManager:
 
             # All attempts failed
             raise ConnectionError(f"Failed to connect after {max_retries} attempts: {last_error}")
+
+    async def resend_auth(self, account_id: int) -> dict:
+        """Request Telegram's next allowed delivery route on the pending session."""
+        async with self._get_lock(account_id):
+            return await self._resend_auth_unlocked(account_id)
 
     async def complete_auth(self, account_id: int, code: str,
                             password: Optional[str] = None) -> dict:
