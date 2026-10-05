@@ -409,6 +409,38 @@ async def restart_auth(account_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/accounts/{account_id}/auth/qr/start")
+async def start_qr_auth(account_id: int):
+    """Create a Telegram QR login token."""
+    account = await db.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        return await get_telegram_manager().start_qr_auth(account_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/accounts/{account_id}/auth/qr/status")
+async def qr_auth_status(account_id: int):
+    """Poll the current Telegram QR login state."""
+    result = await get_telegram_manager().qr_auth_status(account_id)
+    if result.get("status") == "success":
+        await db.update_account_authorized(account_id, True)
+    return result
+
+
+@app.post("/api/accounts/{account_id}/auth/qr/password")
+async def complete_qr_password(account_id: int, data: AccountVerifyRequest):
+    """Complete QR login when Telegram requires the 2FA password."""
+    result = await get_telegram_manager().complete_qr_password(
+        account_id, data.password or ""
+    )
+    if result.get("status") == "success":
+        await db.update_account_authorized(account_id, True)
+    return result
+
+
 @app.post("/api/accounts/{account_id}/sync")
 async def sync_account_chats(account_id: int):
     """Sync chats from Telegram account"""

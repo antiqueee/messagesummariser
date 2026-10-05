@@ -1,5 +1,7 @@
 import os
 import asyncio
+import base64
+import io
 import traceback
 import time
 from datetime import datetime, timedelta, timezone
@@ -15,6 +17,8 @@ from telethon.errors import (
     PhoneCodeInvalidError,
     SendCodeUnavailableError,
 )
+import qrcode
+from qrcode.image.svg import SvgPathImage
 
 from .proxy_manager import get_proxy_manager, ProxyConfig
 
@@ -45,6 +49,7 @@ class TelegramClientManager:
         self.use_proxy = use_proxy
         self._clients: dict[int, TelegramClient] = {}
         self._pending_auth: dict[int, dict] = {}  # account_id -> {client, phone_code_hash}
+        self._pending_qr_auth: dict[int, dict] = {}
         self._locks: dict[int, asyncio.Lock] = {}  # Lock per account to prevent concurrent access
         self._operation_locks: dict[int, asyncio.Lock] = {}
         self._proxy_initialized = False
@@ -416,6 +421,110 @@ class TelegramClientManager:
         # cleanup lock has been released.
         return await self.start_auth(account_id, phone)
 
+    async def _connect_qr_client(self, account_id: int, max_retries: int = 3) -> TelegramClient:
+        """Connect a login client directly, then through healthy proxies."""
+        session_path = self._get_session_path(account_id)
+        pm = get_proxy_manager() if self.use_proxy else None
+        last_error = None
+        for attempt in range(max_retries):
+            proxy = pm.current_proxy if pm else None
+            client = self._create_client(str(session_path), proxy)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=30)
+                return client
+            except CONNECTION_ERRORS as exc:
+                last_error = exc
+                await self._safe_disconnect(client)
+                if pm is None:
+                    pm = get_proxy_manager()
+                    if await pm.get_best_proxy():
+                        continue
+                elif await pm.get_next_proxy():
+                    continue
+                break
+        raise ConnectionError(f"Не удалось подключиться к Telegram: {last_error}")
+
+    @staticmethod
+    def _qr_data_url(url: str) -> str:
+        image = qrcode.make(url, image_factory=SvgPathImage, border=2)
+        buffer = io.BytesIO()
+        image.save(buffer)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/svg+xml;base64,{encoded}"
+
+    async def _wait_for_qr_login(self, account_id: int, qr_login, client: TelegramClient) -> None:
+        state = self._pending_qr_auth.get(account_id)
+        try:
+            await qr_login.wait()
+        except SessionPasswordNeededError:
+            if state:
+                state["status"] = "password_required"
+        except asyncio.TimeoutError:
+            if state:
+                state["status"] = "expired"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if state:
+                state["status"] = "error"
+                state["message"] = str(exc)
+        else:
+            self._clients[account_id] = client
+            if state:
+                state["status"] = "success"
+
+    async def start_qr_auth(self, account_id: int) -> dict:
+        """Create a QR login token and begin waiting for its confirmation."""
+        async with self._get_lock(account_id):
+            old_qr = self._pending_qr_auth.pop(account_id, None)
+            if old_qr:
+                task = old_qr.get("task")
+                if task and not task.done():
+                    task.cancel()
+                await self._safe_disconnect(old_qr.get("client"))
+
+            auth_data = self._pending_auth.pop(account_id, None)
+            client = auth_data.get("client") if auth_data else None
+            if not client or not client.is_connected():
+                await self._safe_disconnect(client)
+                client = await self._connect_qr_client(account_id)
+
+            qr_login = await client.qr_login()
+            state = {
+                "status": "pending",
+                "client": client,
+                "qr_login": qr_login,
+                "message": None,
+            }
+            self._pending_qr_auth[account_id] = state
+            state["task"] = asyncio.create_task(
+                self._wait_for_qr_login(account_id, qr_login, client)
+            )
+            return {
+                "status": "pending",
+                "qr_image": self._qr_data_url(qr_login.url),
+                "expires_at": qr_login.expires.isoformat(),
+            }
+
+    async def qr_auth_status(self, account_id: int) -> dict:
+        state = self._pending_qr_auth.get(account_id)
+        if not state:
+            return {"status": "not_started", "message": "Сначала создайте QR-код"}
+        return {"status": state["status"], "message": state.get("message")}
+
+    async def complete_qr_password(self, account_id: int, password: str) -> dict:
+        async with self._get_lock(account_id):
+            state = self._pending_qr_auth.get(account_id)
+            if not state or state.get("status") != "password_required":
+                return {"status": "error", "message": "QR-авторизация не ожидает пароль"}
+            try:
+                await state["client"].sign_in(password=password)
+            except Exception as exc:
+                return {"status": "error", "message": str(exc)}
+            self._clients[account_id] = state["client"]
+            state["status"] = "success"
+            return {"status": "success"}
+
     async def complete_auth(self, account_id: int, code: str,
                             password: Optional[str] = None) -> dict:
         """Complete authentication with the received code"""
@@ -461,6 +570,13 @@ class TelegramClientManager:
             if account_id in self._pending_auth:
                 await self._pending_auth[account_id]['client'].disconnect()
                 del self._pending_auth[account_id]
+
+            qr_state = self._pending_qr_auth.pop(account_id, None)
+            if qr_state:
+                task = qr_state.get("task")
+                if task and not task.done():
+                    task.cancel()
+                await self._safe_disconnect(qr_state.get("client"))
 
             # Remove session files
             session_path = self._get_session_path(account_id)
@@ -796,6 +912,13 @@ class TelegramClientManager:
         for auth_data in self._pending_auth.values():
             await auth_data['client'].disconnect()
         self._pending_auth.clear()
+
+        for qr_state in self._pending_qr_auth.values():
+            task = qr_state.get("task")
+            if task and not task.done():
+                task.cancel()
+            await self._safe_disconnect(qr_state.get("client"))
+        self._pending_qr_auth.clear()
 
 
 # Global instance (will be initialized in main.py)

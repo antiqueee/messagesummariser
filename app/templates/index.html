@@ -1752,16 +1752,22 @@
         <div class="modal-content">
             <h3 class="modal-title">Авторизация Telegram</h3>
             <p id="auth-message" style="margin-bottom: 15px;"></p>
-            <div class="form-group">
+            <div class="form-group" id="auth-code-group">
                 <label>Код из Telegram:</label>
                 <input type="text" id="auth-code" placeholder="12345">
+            </div>
+            <div id="auth-qr-group" style="display: none; text-align: center; margin-bottom: 18px;">
+                <img id="auth-qr-image" alt="QR-код Telegram" style="width: 280px; max-width: 100%; background: white; padding: 8px; border-radius: 12px;">
+                <p style="margin-top: 10px; color: #666;">
+                    Откройте Telegram → Настройки → Устройства → Подключить устройство и отсканируйте код.
+                </p>
             </div>
             <div class="form-group" id="auth-password-group" style="display: none;">
                 <label>Пароль 2FA (если есть):</label>
                 <input type="password" id="auth-password">
             </div>
             <div class="input-group">
-                <button class="btn btn-primary" onclick="verifyAuth()">Подтвердить</button>
+                <button class="btn btn-primary" id="auth-confirm-btn" onclick="verifyAuth()">Подтвердить</button>
                 <button class="btn btn-secondary" id="auth-resend-btn" onclick="requestTelegramCodeAgain()">Запросить новый код</button>
                 <button class="btn btn-secondary" onclick="closeModal('auth-modal')">Отмена</button>
             </div>
@@ -1965,6 +1971,8 @@
     <script>
         let currentAuthAccountId = null;
         let authResendTimer = null;
+        let telegramQrPollTimer = null;
+        let telegramQrMode = false;
         let currentMaxAuthAccountId = null;
 
         // Tab switching
@@ -1996,6 +2004,10 @@
 
         function closeModal(id) {
             document.getElementById(id).classList.remove('active');
+            if (id === 'auth-modal' && telegramQrPollTimer) {
+                clearInterval(telegramQrPollTimer);
+                telegramQrPollTimer = null;
+            }
         }
 
         function showAddAccountModal() {
@@ -2151,7 +2163,8 @@
                     isAuthorized: acc.is_authorized,
                     actions: `
                         ${!acc.is_authorized
-                            ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>`
+                            ? `<button class="btn btn-primary btn-small" onclick="startAuth(${acc.id})">Авторизовать</button>
+                               <button class="btn btn-secondary btn-small" onclick="startQrAuth(${acc.id})">Войти по QR</button>`
                             : `<button class="btn btn-success btn-small" onclick="syncChats(${acc.id})">Синхронизировать</button>
                                <button class="btn btn-secondary btn-small" onclick="openServiceMessages(${acc.id})">Сообщения TG</button>`}
                         <button class="btn btn-danger btn-small" onclick="deleteAccount(${acc.id})">Удалить</button>
@@ -2190,6 +2203,7 @@
 
         async function startAuth(accountId) {
             currentAuthAccountId = accountId;
+            telegramQrMode = false;
             try {
                 const result = await api(`/api/accounts/${accountId}/auth/start`, 'POST');
                 if (result.status === 'error') {
@@ -2199,6 +2213,10 @@
                 document.getElementById('auth-code').value = '';
                 document.getElementById('auth-password').value = '';
                 document.getElementById('auth-password-group').style.display = 'none';
+                document.getElementById('auth-code-group').style.display = '';
+                document.getElementById('auth-qr-group').style.display = 'none';
+                document.getElementById('auth-confirm-btn').style.display = '';
+                document.getElementById('auth-resend-btn').style.display = '';
                 showModal('auth-modal');
             } catch (e) {
                 alert('Ошибка: ' + e.message);
@@ -2293,10 +2311,76 @@
             }
         }
 
+        async function startQrAuth(accountId) {
+            currentAuthAccountId = accountId;
+            telegramQrMode = true;
+            if (telegramQrPollTimer) clearInterval(telegramQrPollTimer);
+            document.getElementById('auth-message').textContent = 'Создаю QR-код Telegram…';
+            document.getElementById('auth-code-group').style.display = 'none';
+            document.getElementById('auth-password-group').style.display = 'none';
+            document.getElementById('auth-qr-group').style.display = '';
+            document.getElementById('auth-confirm-btn').style.display = 'none';
+            document.getElementById('auth-resend-btn').style.display = 'none';
+            showModal('auth-modal');
+            try {
+                const result = await api(`/api/accounts/${accountId}/auth/qr/start`, 'POST');
+                document.getElementById('auth-qr-image').src = result.qr_image;
+                document.getElementById('auth-message').textContent =
+                    'Отсканируйте QR-код в уже авторизованном Telegram. Код из сообщения не нужен.';
+                telegramQrPollTimer = setInterval(pollTelegramQrStatus, 1500);
+            } catch (e) {
+                document.getElementById('auth-message').textContent = 'Ошибка QR-входа: ' + e.message;
+            }
+        }
+
+        async function pollTelegramQrStatus() {
+            if (!currentAuthAccountId || !telegramQrMode) return;
+            try {
+                const result = await api(`/api/accounts/${currentAuthAccountId}/auth/qr/status`);
+                if (result.status === 'success') {
+                    clearInterval(telegramQrPollTimer);
+                    telegramQrPollTimer = null;
+                    closeModal('auth-modal');
+                    await loadAccounts();
+                    alert('Telegram-аккаунт авторизован!');
+                } else if (result.status === 'password_required') {
+                    clearInterval(telegramQrPollTimer);
+                    telegramQrPollTimer = null;
+                    document.getElementById('auth-message').textContent =
+                        'QR подтверждён. Введите пароль двухфакторной аутентификации:';
+                    document.getElementById('auth-qr-group').style.display = 'none';
+                    document.getElementById('auth-password-group').style.display = '';
+                    document.getElementById('auth-confirm-btn').style.display = '';
+                } else if (result.status === 'expired' || result.status === 'error') {
+                    clearInterval(telegramQrPollTimer);
+                    telegramQrPollTimer = null;
+                    document.getElementById('auth-message').textContent = result.status === 'expired'
+                        ? 'QR-код истёк. Закройте окно и нажмите «Войти по QR» ещё раз.'
+                        : 'Ошибка QR-входа: ' + (result.message || 'неизвестная ошибка');
+                }
+            } catch (e) {
+                console.warn('QR status error:', e);
+            }
+        }
+
         async function verifyAuth() {
             const code = document.getElementById('auth-code').value;
             const password = document.getElementById('auth-password').value;
             try {
+                if (telegramQrMode) {
+                    const result = await api(
+                        `/api/accounts/${currentAuthAccountId}/auth/qr/password`,
+                        'POST',
+                        { account_id: currentAuthAccountId, code: '', password: password || null }
+                    );
+                    if (result.status !== 'success') {
+                        throw new Error(result.message || 'Не удалось подтвердить пароль');
+                    }
+                    closeModal('auth-modal');
+                    loadAccounts();
+                    alert('Авторизация успешна!');
+                    return;
+                }
                 const result = await api(`/api/accounts/${currentAuthAccountId}/auth/verify`, 'POST', {
                     account_id: currentAuthAccountId,
                     code,
