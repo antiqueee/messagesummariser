@@ -2192,6 +2192,9 @@
             currentAuthAccountId = accountId;
             try {
                 const result = await api(`/api/accounts/${accountId}/auth/start`, 'POST');
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Telegram не смог отправить код');
+                }
                 updateTelegramAuthDelivery(result, false);
                 document.getElementById('auth-code').value = '';
                 document.getElementById('auth-password').value = '';

@@ -357,6 +357,18 @@ class TelegramClientManager:
                     await self._safe_disconnect(client)
                     raise
 
+                except SendCodeUnavailableError:
+                    await self._safe_disconnect(client)
+                    return {
+                        "status": "error",
+                        "error_code": "delivery_unavailable",
+                        "message": (
+                            "Telegram временно не разрешает отправить новый код: для этого "
+                            "номера уже использованы доступные попытки доставки. Подождите "
+                            "и запросите код позже только один раз."
+                        ),
+                    }
+
                 except Exception as e:
                     print(f"[Auth] ERROR sending code: {e}")
                     traceback.print_exc()
