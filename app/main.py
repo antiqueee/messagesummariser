@@ -395,6 +395,20 @@ async def resend_auth(account_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/accounts/{account_id}/auth/restart")
+async def restart_auth(account_id: int):
+    """Start a fresh Telegram code request after discarding the stale one."""
+    account = await db.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    try:
+        tm = get_telegram_manager()
+        return await tm.restart_auth(account_id, account['phone'])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/accounts/{account_id}/sync")
 async def sync_account_chats(account_id: int):
     """Sync chats from Telegram account"""

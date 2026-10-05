@@ -1762,7 +1762,7 @@
             </div>
             <div class="input-group">
                 <button class="btn btn-primary" onclick="verifyAuth()">Подтвердить</button>
-                <button class="btn btn-secondary" id="auth-resend-btn" onclick="resendAuth()">Запросить код повторно</button>
+                <button class="btn btn-secondary" id="auth-resend-btn" onclick="requestTelegramCodeAgain()">Запросить новый код</button>
                 <button class="btn btn-secondary" onclick="closeModal('auth-modal')">Отмена</button>
             </div>
         </div>
@@ -2229,14 +2229,15 @@
                 (result.next_delivery_type ? '' : ' Другой способ доставки сейчас не предложен.');
 
             const button = document.getElementById('auth-resend-btn');
-            button.style.display = result.next_delivery_type ? '' : 'none';
+            button.style.display = '';
+            button.dataset.mode = result.next_delivery_type ? 'resend' : 'restart';
             if (authResendTimer) clearInterval(authResendTimer);
             let seconds = Number(result.resend_available_in || 0);
             const render = () => {
                 button.disabled = seconds > 0;
                 button.textContent = seconds > 0
                     ? `Повторить через ${seconds} сек.`
-                    : 'Запросить код повторно';
+                    : (button.dataset.mode === 'resend' ? 'Запросить код повторно' : 'Запросить новый код');
             };
             render();
             if (seconds > 0) {
@@ -2267,6 +2268,28 @@
             } catch (e) {
                 button.disabled = false;
                 alert('Ошибка повторной отправки: ' + e.message);
+            }
+        }
+
+        async function requestTelegramCodeAgain() {
+            const button = document.getElementById('auth-resend-btn');
+            if (button.dataset.mode === 'resend') {
+                return resendAuth();
+            }
+            if (!currentAuthAccountId) return;
+            button.disabled = true;
+            try {
+                const result = await api(
+                    `/api/accounts/${currentAuthAccountId}/auth/restart`,
+                    'POST'
+                );
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Новый запрос к Telegram не удался');
+                }
+                updateTelegramAuthDelivery(result, true);
+            } catch (e) {
+                button.disabled = false;
+                alert('Ошибка нового запроса: ' + e.message);
             }
         }
 

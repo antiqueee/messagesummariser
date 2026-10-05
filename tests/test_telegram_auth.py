@@ -107,6 +107,23 @@ class TelegramAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["error_code"], "delivery_unavailable")
         self.assertIn("Telegram", result["message"])
 
+    async def test_restart_discards_pending_client_and_starts_fresh_request(self):
+        manager = TelegramClientManager(1, "hash", use_proxy=False)
+        old_client = FakeAuthClient(None)
+        old_client.disconnect = AsyncMock()
+        manager._pending_auth[7] = {
+            "client": old_client,
+            "phone": "+70000000000",
+            "phone_code_hash": "old-hash",
+        }
+        manager.start_auth = AsyncMock(return_value={"status": "code_required"})
+
+        result = await manager.restart_auth(7, "+70000000000")
+
+        old_client.disconnect.assert_awaited_once()
+        manager.start_auth.assert_awaited_once_with(7, "+70000000000")
+        self.assertEqual(result["status"], "code_required")
+
 
 if __name__ == "__main__":
     unittest.main()

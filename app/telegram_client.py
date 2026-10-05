@@ -1,6 +1,7 @@
 import os
 import asyncio
 import traceback
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, AsyncGenerator
@@ -324,6 +325,7 @@ class TelegramClientManager:
                         'phone': phone,
                         'phone_code_hash': result.phone_code_hash,
                         'delivery': delivery,
+                        'requested_at': time.monotonic(),
                     }
                     print(
                         f"[Auth] Delivery for account {account_id}: "
@@ -381,6 +383,27 @@ class TelegramClientManager:
         """Request Telegram's next allowed delivery route on the pending session."""
         async with self._get_lock(account_id):
             return await self._resend_auth_unlocked(account_id)
+
+    async def restart_auth(self, account_id: int, phone: str) -> dict:
+        """Discard a stale code request and make one fresh SendCodeRequest."""
+        async with self._get_lock(account_id):
+            auth_data = self._pending_auth.get(account_id)
+            if auth_data:
+                elapsed = time.monotonic() - float(auth_data.get("requested_at") or 0)
+                if auth_data.get("requested_at") and elapsed < 60:
+                    wait_seconds = max(1, int(60 - elapsed))
+                    return {
+                        "status": "error",
+                        "error_code": "retry_too_soon",
+                        "retry_after": wait_seconds,
+                        "message": f"Подождите ещё {wait_seconds} сек. перед новым запросом.",
+                    }
+                self._pending_auth.pop(account_id, None)
+                await self._safe_disconnect(auth_data.get("client"))
+
+        # start_auth takes the same per-account lock, so call it only after the
+        # cleanup lock has been released.
+        return await self.start_auth(account_id, phone)
 
     async def complete_auth(self, account_id: int, code: str,
                             password: Optional[str] = None) -> dict:
