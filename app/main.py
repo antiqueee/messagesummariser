@@ -430,6 +430,35 @@ async def qr_auth_status(account_id: int):
     return result
 
 
+@app.post("/api/accounts/{account_id}/auth/qr/open/{telegram_app}")
+async def open_qr_in_telegram(account_id: int, telegram_app: str):
+    """Open the pending one-time QR token in a selected local macOS client."""
+    bundle_ids = {
+        "app_store": "ru.keepcoder.Telegram",
+        "desktop": "com.tdesktop.Telegram",
+    }
+    bundle_id = bundle_ids.get(telegram_app)
+    if not bundle_id:
+        raise HTTPException(status_code=400, detail="Неизвестное приложение Telegram")
+
+    qr_url = await get_telegram_manager().qr_auth_url(account_id)
+    if not qr_url:
+        raise HTTPException(status_code=400, detail="QR-код не создан или уже истёк")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "/usr/bin/open", "-b", bundle_id, qr_url,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось открыть Telegram: {e}")
+    if process.returncode != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise HTTPException(status_code=400, detail=message or "Telegram не открылся")
+    return {"status": "opened", "telegram_app": telegram_app}
+
+
 @app.post("/api/accounts/{account_id}/auth/qr/password")
 async def complete_qr_password(account_id: int, data: AccountVerifyRequest):
     """Complete QR login when Telegram requires the 2FA password."""

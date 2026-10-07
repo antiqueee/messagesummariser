@@ -506,6 +506,12 @@ class TelegramClientManager:
                 "expires_at": qr_login.expires.isoformat(),
             }
 
+    async def qr_auth_url(self, account_id: int) -> str | None:
+        state = self._pending_qr_auth.get(account_id)
+        if not state or state.get("status") != "pending":
+            return None
+        return state["qr_login"].url
+
     async def qr_auth_status(self, account_id: int) -> dict:
         state = self._pending_qr_auth.get(account_id)
         if not state:

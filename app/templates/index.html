@@ -1761,6 +1761,10 @@
                 <p style="margin-top: 10px; color: #666;">
                     Откройте Telegram → Настройки → Устройства → Подключить устройство и отсканируйте код.
                 </p>
+                <div id="auth-qr-desktop-actions" style="display: none; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px;">
+                    <button class="btn btn-secondary" onclick="openTelegramQrApp('app_store')">Открыть в Telegram из App Store</button>
+                    <button class="btn btn-secondary" onclick="openTelegramQrApp('desktop')">Открыть в Telegram Desktop</button>
+                </div>
             </div>
             <div class="form-group" id="auth-password-group" style="display: none;">
                 <label>Пароль 2FA (если есть):</label>
@@ -2319,17 +2323,33 @@
             document.getElementById('auth-code-group').style.display = 'none';
             document.getElementById('auth-password-group').style.display = 'none';
             document.getElementById('auth-qr-group').style.display = '';
+            document.getElementById('auth-qr-desktop-actions').style.display = 'none';
             document.getElementById('auth-confirm-btn').style.display = 'none';
             document.getElementById('auth-resend-btn').style.display = 'none';
             showModal('auth-modal');
             try {
                 const result = await api(`/api/accounts/${accountId}/auth/qr/start`, 'POST');
                 document.getElementById('auth-qr-image').src = result.qr_image;
+                document.getElementById('auth-qr-desktop-actions').style.display = 'flex';
                 document.getElementById('auth-message').textContent =
-                    'Отсканируйте QR-код в уже авторизованном Telegram. Код из сообщения не нужен.';
+                    'Отсканируйте QR-код или откройте одноразовую ссылку в Telegram Desktop. Код из сообщения не нужен.';
                 telegramQrPollTimer = setInterval(pollTelegramQrStatus, 1500);
             } catch (e) {
                 document.getElementById('auth-message').textContent = 'Ошибка QR-входа: ' + e.message;
+            }
+        }
+
+        async function openTelegramQrApp(telegramApp) {
+            if (!currentAuthAccountId || !telegramQrMode) return;
+            try {
+                await api(
+                    `/api/accounts/${currentAuthAccountId}/auth/qr/open/${telegramApp}`,
+                    'POST'
+                );
+                document.getElementById('auth-message').textContent =
+                    'Telegram открыт. Подтвердите подключение нового устройства в выбранном приложении.';
+            } catch (e) {
+                alert('Не удалось открыть Telegram: ' + e.message);
             }
         }
 
