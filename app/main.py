@@ -122,7 +122,7 @@ from .bot import start_bot, stop_bot
 from .models import (
     AccountCreateRequest, AccountVerifyRequest,
     ComplexCreateRequest, ChatUpdateRequest, GenerateReportRequest,
-    GenerateWeeklyReportRequest,
+    GenerateWeeklyReportRequest, GenerateThematicReportRequest,
     ComplexMaxTargetRequest, SaveReportRequest, SendReportToMaxRequest,
     AnalyzeNegativistsRequest, MaxAccountCreateRequest, MaxChatAddRequest,
     VkAccountCreateRequest, VkTokenUpdateRequest
@@ -1054,6 +1054,239 @@ async def get_chat_topics(chat_id: int):
 
 
 # ============== Report Generation ==============
+
+async def _generate_thematic_report_payload(
+        data: GenerateThematicReportRequest,
+        progress: Optional[Callable[[dict], Awaitable[None]]] = None,
+):
+    """Generate one prompt-driven report without daily-report filters or memory."""
+
+    async def emit(**updates):
+        if progress:
+            await progress(updates)
+
+    start_date = data.get_start_date()
+    end_date = data.get_end_date()
+    if end_date <= start_date:
+        raise HTTPException(status_code=400, detail="Конец периода должен быть позже начала")
+
+    try:
+        summarizer = get_summarizer()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=400,
+            detail="AI-суммаризатор не настроен. Добавьте OPENROUTER_API_KEY.",
+        )
+    summarizer.reset_usage()
+
+    chats_by_complex = await db.get_monitored_chats_by_complex()
+    chats = chats_by_complex.get(data.complex_id) or []
+    if data.chat_ids:
+        selected_ids = set(data.chat_ids)
+        chats = [chat for chat in chats if int(chat["id"]) in selected_ids]
+    if not chats:
+        raise HTTPException(status_code=400, detail="У выбранного ЖК нет выбранных чатов мониторинга")
+
+    complex_name = chats[0].get("complex_name") or "Неизвестный ЖК"
+    await emit(
+        status="running",
+        stage="fetch",
+        percent=4,
+        title="Собираю переписку",
+        detail=f"{complex_name}: выбрано чатов — {len(chats)}.",
+        current_complex=complex_name,
+        total_chats=len(chats),
+    )
+
+    chats_with_messages: list[dict] = []
+    coverage: list[dict] = []
+    seen_source_chats: set[tuple[str, str]] = set()
+    sorted_chats = sort_chats_by_building(chats)
+    for index, chat in enumerate(sorted_chats, start=1):
+        source = normalize_source_name(chat.get("source"))
+        source_label = get_source_label(source)
+        chat_name = chat.get("custom_name") or chat.get("original_title") or "Неизвестный чат"
+        source_chat_id = str(chat.get("source_chat_id") or chat.get("telegram_id") or "")
+        source_key = (source, source_chat_id)
+        if source_key in seen_source_chats:
+            coverage.append({
+                "chat_id": chat["id"],
+                "chat_name": chat_name,
+                "source": source,
+                "status": "duplicate_skipped",
+                "message_count": 0,
+                "detail": "То же исходное сообщество уже прочитано через другое подключение.",
+            })
+            continue
+        await emit(
+            status="running",
+            stage="fetch",
+            percent=4 + int((index - 1) / max(1, len(sorted_chats)) * 34),
+            title=f"{complex_name}: читаю чат {index}/{len(sorted_chats)}",
+            detail=f"{source_label} • {chat_name}",
+            current_complex=complex_name,
+            current_chat=chat_name,
+            current_source=source_label,
+        )
+        topic_ids = None
+        if chat.get("selected_topics"):
+            try:
+                topic_ids = json.loads(chat["selected_topics"])
+            except (TypeError, json.JSONDecodeError):
+                topic_ids = None
+        try:
+            messages = await fetch_chat_messages(
+                chat=chat,
+                start_date=start_date,
+                end_date=end_date,
+                topic_ids=topic_ids,
+            )
+            seen_source_chats.add(source_key)
+            chats_with_messages.append({
+                "chat_id": chat["id"],
+                "chat_name": chat_name,
+                "report_chat_name": build_report_chat_name(chat),
+                "source": source,
+                "source_chat_id": chat.get("source_chat_id"),
+                "telegram_id": chat.get("telegram_id"),
+                "messages": messages,
+            })
+            coverage.append({
+                "chat_id": chat["id"],
+                "chat_name": chat_name,
+                "source": source,
+                "status": "read",
+                "message_count": len(messages),
+            })
+        except SourceMessageFetchError as exc:
+            print(
+                f"[Thematic] Could not read {source_label} chat {chat_name}: {exc}",
+                flush=True,
+            )
+            coverage.append({
+                "chat_id": chat["id"],
+                "chat_name": chat_name,
+                "source": source,
+                "status": "fetch_error",
+                "message_count": 0,
+                "detail": str(exc),
+            })
+
+    readable_chats = [item for item in chats_with_messages if item.get("messages")]
+    total_messages = sum(len(item["messages"]) for item in chats_with_messages)
+    await emit(
+        status="running",
+        stage="scan",
+        percent=40,
+        title="Ищу материалы по вашему регламенту",
+        detail=f"Проверяю {total_messages} сообщений во всех доступных чатах.",
+        current_complex=complex_name,
+        current_chat=None,
+        current_source="AI",
+    )
+
+    async def scan_progress(completed: int, total: int) -> None:
+        percent = 40 + int((completed / max(1, total)) * 46)
+        await emit(
+            status="running",
+            stage="scan" if completed < total else "render",
+            percent=percent,
+            title=(
+                f"Ищу релевантные сообщения: {completed}/{total}"
+                if completed < total
+                else "Материалы собраны, пишу отчёт"
+            ),
+            detail=(
+                "Обрабатываю всю переписку порциями, ничего не обрезая."
+                if completed < total
+                else "Собираю связный итог строго по полю «Что нужно выяснить»."
+            ),
+            current_complex=complex_name,
+            current_chat=None,
+            current_source="AI",
+        )
+
+    result = await summarizer.build_thematic_report(
+        complex_name=complex_name,
+        chats_with_messages=readable_chats,
+        start_date=start_date,
+        end_date=end_date,
+        instructions=data.instructions,
+        coverage=coverage,
+        progress=scan_progress,
+    )
+
+    report_run_id = str(uuid.uuid4())
+    usage = summarizer.get_usage_summary()
+    await db.save_ai_usage_records(report_run_id, usage.get("records") or [])
+    return {
+        "report_run_id": report_run_id,
+        "generated_at": datetime.now().isoformat(),
+        "period_start": start_date.isoformat(),
+        "period_end": end_date.isoformat(),
+        "mode": "thematic",
+        "complex_id": data.complex_id,
+        "complex_name": complex_name,
+        "instructions": data.instructions,
+        "summary": result["summary_text"],
+        "coverage": coverage,
+        "message_count": total_messages,
+        "matched_message_count": result["matched_message_count"],
+        "evidence_count": result["evidence_count"],
+        "diagnostics": result["diagnostics"],
+        "usage": {key: value for key, value in usage.items() if key != "records"},
+    }
+
+
+@app.post("/api/thematic-reports/generate/start")
+async def start_thematic_report_generation(data: GenerateThematicReportRequest):
+    """Start a standalone prompt-driven thematic analysis job."""
+    _cleanup_report_progress_jobs()
+    job_id = str(uuid.uuid4())
+    REPORT_PROGRESS_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "stage": "queued",
+        "percent": 0,
+        "title": "Тематический отчёт поставлен в очередь",
+        "detail": "Сейчас начну сбор сообщений.",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+        "updated_ts": datetime.now().timestamp(),
+        "result": None,
+        "error": None,
+    }
+
+    async def progress_update(updates: dict) -> None:
+        await _set_report_progress(job_id, **updates)
+
+    async def run_job() -> None:
+        try:
+            await _set_report_progress(job_id, status="running", stage="start", percent=1)
+            result = await _generate_thematic_report_payload(data, progress_update)
+            await _set_report_progress(
+                job_id,
+                status="done",
+                stage="done",
+                percent=100,
+                title="Тематический отчёт готов",
+                detail="Результат открыт ниже.",
+                result=result,
+            )
+        except HTTPException as exc:
+            await _set_report_progress(
+                job_id, status="error", stage="error", percent=100,
+                title="Ошибка тематического анализа", detail=str(exc.detail), error=str(exc.detail),
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            await _set_report_progress(
+                job_id, status="error", stage="error", percent=100,
+                title="Ошибка тематического анализа", detail=str(exc), error=str(exc),
+            )
+
+    REPORT_PROGRESS_JOBS[job_id]["task"] = asyncio.create_task(run_job())
+    return _public_report_progress_job(REPORT_PROGRESS_JOBS[job_id])
 
 async def _generate_report_payload(
         data: GenerateReportRequest,

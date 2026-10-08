@@ -812,13 +812,13 @@
             background: var(--danger-bg);
         }
 
-        #report-complexes, #weekly-complexes {
+        #report-complexes, #weekly-complexes, #thematic-chats {
             display: flex;
             flex-wrap: wrap;
             gap: 7px;
         }
 
-        #report-complexes label, #weekly-complexes label {
+        #report-complexes label, #weekly-complexes label, #thematic-chats label {
             display: inline-flex !important;
             align-items: center;
             gap: 8px;
@@ -839,24 +839,24 @@
             background: #fff;
         }
 
-        #reports-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
+        #reports-panel.panel.active, #thematic-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
             display: grid;
             grid-template-columns: 440px minmax(0, 1fr);
             gap: 20px;
             align-items: start;
         }
 
-        #reports-panel > .section, #weekly-panel > .section, #negativists-panel > .section {
+        #reports-panel > .section, #thematic-panel > .section, #weekly-panel > .section, #negativists-panel > .section {
             margin-bottom: 0;
         }
 
-        #report-loading, #weekly-loading, #negativists-loading,
-        #report-result, #weekly-result, #negativists-result {
+        #report-loading, #thematic-loading, #weekly-loading, #negativists-loading,
+        #report-result, #thematic-result, #weekly-result, #negativists-result {
             grid-column: 2;
             min-width: 0;
         }
 
-        #report-result:empty::before, #weekly-result:empty::before, #negativists-result:empty::before {
+        #report-result:empty::before, #thematic-result:empty::before, #weekly-result:empty::before, #negativists-result:empty::before {
             content: "Результат появится здесь после запуска анализа";
             display: block;
             padding: 80px 36px;
@@ -869,6 +869,7 @@
         }
 
         #report-loading[style*="block"] + #report-result:empty::before,
+        #thematic-loading[style*="block"] + #thematic-result:empty::before,
         #weekly-loading[style*="block"] + #weekly-result:empty::before,
         #negativists-loading[style*="block"] + #negativists-result:empty::before {
             display: none;
@@ -1391,12 +1392,12 @@
                 padding: 0 14px;
             }
 
-            #reports-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
+            #reports-panel.panel.active, #thematic-panel.panel.active, #weekly-panel.panel.active, #negativists-panel.panel.active {
                 display: block;
             }
 
-            #report-loading, #weekly-loading, #negativists-loading,
-            #report-result, #weekly-result, #negativists-result {
+            #report-loading, #thematic-loading, #weekly-loading, #negativists-loading,
+            #report-result, #thematic-result, #weekly-result, #negativists-result {
                 margin-top: 16px;
             }
 
@@ -1462,6 +1463,7 @@
 
         <div class="tabs">
             <button class="tab-btn active" data-tab="reports">Сводка</button>
+            <button class="tab-btn" data-tab="thematic">Тематический отчёт</button>
             <button class="tab-btn" data-tab="weekly">Недельные сводки</button>
             <button class="tab-btn" data-tab="chats">Чаты</button>
             <button class="tab-btn" data-tab="accounts">Аккаунты</button>
@@ -1600,6 +1602,69 @@
             </div>
 
             <div id="report-result"></div>
+        </div>
+
+        <!-- Thematic Reports Panel -->
+        <div id="thematic-panel" class="panel">
+            <div class="section">
+                <h2 class="section-title">Тематический отчёт</h2>
+
+                <div class="form-group">
+                    <label for="thematic-complex">ЖК:</label>
+                    <select id="thematic-complex" onchange="loadThematicChats()"></select>
+                </div>
+
+                <div class="form-group">
+                    <label>Чаты:</label>
+                    <div id="thematic-chats"></div>
+                    <div style="margin-top: 7px; display: flex; gap: 8px;">
+                        <button class="btn btn-secondary btn-small" type="button" onclick="setAllThematicChats(true)">Выбрать все</button>
+                        <button class="btn btn-secondary btn-small" type="button" onclick="setAllThematicChats(false)">Снять все</button>
+                    </div>
+                </div>
+
+                <div class="date-inputs">
+                    <div class="form-group">
+                        <label>Начало периода:</label>
+                        <input type="datetime-local" id="thematic-start-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Конец периода:</label>
+                        <input type="datetime-local" id="thematic-end-date">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="thematic-instructions">Что нужно выяснить:</label>
+                    <textarea id="thematic-instructions" style="width: 100%; min-height: 420px; resize: vertical;"
+                        placeholder="Введите задачу или подробный регламент этого отчёта. Например: разберите обсуждение затоплений после дождя — когда и где они происходили, какие причины называют жители, что отвечали УК и застройщик, какие действия предприняты. Указывайте чат, дату и сообщение."></textarea>
+                    <div style="margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.45;">
+                        Это разовый регламент только для текущего тематического отчёта. Он не изменяет обычные ежедневные сводки.
+                    </div>
+                </div>
+
+                <button class="btn btn-success" id="generate-thematic-btn" onclick="generateThematicReport()">Сформировать тематический отчёт</button>
+            </div>
+
+            <div id="thematic-loading" class="loading report-progress-card" style="display: none;">
+                <div class="report-progress-top">
+                    <div>
+                        <div class="report-progress-title" id="thematic-progress-title">Тематический анализ</div>
+                        <div class="report-progress-detail" id="thematic-progress-detail">Подготавливаю задачу...</div>
+                    </div>
+                    <div class="report-progress-percent" id="thematic-progress-percent">0%</div>
+                </div>
+                <div class="report-progress-track">
+                    <div class="report-progress-fill running" id="thematic-progress-fill"></div>
+                </div>
+                <div class="report-progress-meta">
+                    <div class="report-progress-pill">ЖК<strong id="thematic-progress-complex">-</strong></div>
+                    <div class="report-progress-pill">Чат<strong id="thematic-progress-chat">-</strong></div>
+                    <div class="report-progress-pill">Источник<strong id="thematic-progress-source">-</strong></div>
+                </div>
+            </div>
+
+            <div id="thematic-result"></div>
         </div>
 
         <!-- Weekly Reports Panel -->
@@ -1996,6 +2061,7 @@
                     loadChats();
                 }
                 if (btn.dataset.tab === 'reports') { loadReportComplexes(); loadReportArchiveDoc(); }
+                if (btn.dataset.tab === 'thematic') loadThematicComplexes();
                 if (btn.dataset.tab === 'weekly') loadWeeklyComplexes();
                 if (btn.dataset.tab === 'negativists') loadNegativistsChats();
             });
@@ -3879,6 +3945,202 @@
                 document.body.removeChild(textarea);
                 alert('Сводка скопирована!');
             });
+        }
+
+        let thematicGenerationInProgress = false;
+        let thematicLoaded = false;
+        let lastThematicReport = null;
+
+        async function loadThematicComplexes() {
+            const select = document.getElementById('thematic-complex');
+            if (!select) return;
+            if (!thematicLoaded) {
+                try {
+                    const data = await api('/api/complexes');
+                    select.innerHTML = data.complexes.map(c =>
+                        `<option value="${c.id}">${escapeHtml(c.name)}</option>`
+                    ).join('');
+                    const now = new Date();
+                    const weekAgo = new Date(now);
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    document.getElementById('thematic-start-date').value = formatDateForInput(weekAgo);
+                    document.getElementById('thematic-end-date').value = formatDateForInput(now);
+                    const savedDraft = localStorage.getItem('thematic-report-instructions');
+                    if (savedDraft) document.getElementById('thematic-instructions').value = savedDraft;
+                    document.getElementById('thematic-instructions').addEventListener('input', event => {
+                        localStorage.setItem('thematic-report-instructions', event.target.value);
+                    });
+                    thematicLoaded = true;
+                } catch (e) {
+                    select.innerHTML = `<option>${escapeHtml(e.message)}</option>`;
+                    return;
+                }
+            }
+            await loadThematicChats();
+        }
+
+        async function loadThematicChats() {
+            const complexId = Number(document.getElementById('thematic-complex')?.value || 0);
+            const container = document.getElementById('thematic-chats');
+            if (!container || !complexId) {
+                if (container) container.innerHTML = '<span style="color:var(--muted);">Выберите ЖК</span>';
+                return;
+            }
+            container.innerHTML = '<span style="color:var(--muted);">Загружаю чаты...</span>';
+            try {
+                const data = await api(`/api/chats?complex_id=${complexId}&monitored_only=true`);
+                if (!data.chats.length) {
+                    container.innerHTML = '<span style="color:var(--muted);">Нет чатов мониторинга</span>';
+                    return;
+                }
+                container.innerHTML = data.chats.map(chat => {
+                    const source = String(chat.source || 'telegram').toUpperCase();
+                    const name = chat.custom_name || chat.original_title || 'Неизвестный чат';
+                    return `<label>
+                        <input type="checkbox" class="thematic-chat-checkbox" value="${chat.id}" checked>
+                        <span>${escapeHtml(name)} <span style="color:var(--muted);">${escapeHtml(source)}</span></span>
+                    </label>`;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function setAllThematicChats(checked) {
+            document.querySelectorAll('.thematic-chat-checkbox').forEach(item => {
+                item.checked = checked;
+            });
+        }
+
+        function updateThematicProgress(progress) {
+            const percent = Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0))));
+            const fill = document.getElementById('thematic-progress-fill');
+            if (fill) {
+                fill.style.width = `${percent}%`;
+                fill.classList.toggle('running', progress.status !== 'done' && progress.status !== 'error');
+            }
+            document.getElementById('thematic-progress-percent').textContent = `${percent}%`;
+            document.getElementById('thematic-progress-title').textContent = progress.title || 'Тематический анализ';
+            document.getElementById('thematic-progress-detail').textContent = progress.detail || '';
+            document.getElementById('thematic-progress-complex').textContent = progress.current_complex || '-';
+            document.getElementById('thematic-progress-chat').textContent = progress.current_chat || '-';
+            document.getElementById('thematic-progress-source').textContent = progress.current_source || '-';
+        }
+
+        async function waitForThematicProgress(jobId) {
+            while (thematicGenerationInProgress) {
+                const progress = await api(`/api/reports/generate/progress/${jobId}`);
+                updateThematicProgress(progress);
+                if (progress.status === 'done') return progress.result;
+                if (progress.status === 'error') {
+                    throw new Error(progress.error || progress.detail || 'Ошибка тематического анализа');
+                }
+                await sleep(900);
+            }
+            return null;
+        }
+
+        async function generateThematicReport() {
+            if (thematicGenerationInProgress) return;
+            const complexId = Number(document.getElementById('thematic-complex')?.value || 0);
+            const chatIds = Array.from(document.querySelectorAll('.thematic-chat-checkbox:checked'))
+                .map(item => Number(item.value));
+            const startDate = getISODateFromInput('thematic-start-date');
+            const endDate = getISODateFromInput('thematic-end-date');
+            const instructions = document.getElementById('thematic-instructions').value.trim();
+            if (!complexId) return alert('Выберите ЖК');
+            if (!chatIds.length) return alert('Выберите хотя бы один чат');
+            if (!startDate || !endDate) return alert('Выберите период');
+            if (!instructions) return alert('Заполните поле «Что нужно выяснить»');
+
+            const loading = document.getElementById('thematic-loading');
+            const result = document.getElementById('thematic-result');
+            const button = document.getElementById('generate-thematic-btn');
+            thematicGenerationInProgress = true;
+            button.disabled = true;
+            loading.style.display = 'block';
+            result.innerHTML = '';
+            updateThematicProgress({percent: 0, title: 'Тематический анализ', detail: 'Подготавливаю задачу...'});
+            try {
+                const job = await api('/api/thematic-reports/generate/start', 'POST', {
+                    complex_id: complexId,
+                    chat_ids: chatIds,
+                    start_date: startDate,
+                    end_date: endDate,
+                    instructions
+                });
+                updateThematicProgress(job);
+                const report = await waitForThematicProgress(job.job_id);
+                loading.style.display = 'none';
+                if (report) renderThematicReport(report);
+            } catch (e) {
+                updateThematicProgress({status: 'error', percent: 100, title: 'Ошибка', detail: e.message});
+                result.innerHTML = `<div class="alert alert-error">Ошибка: ${escapeHtml(e.message)}</div>`;
+            } finally {
+                thematicGenerationInProgress = false;
+                button.disabled = false;
+            }
+        }
+
+        function renderThematicReport(report) {
+            lastThematicReport = report;
+            const container = document.getElementById('thematic-result');
+            const startDate = new Date(report.period_start);
+            const endDate = new Date(report.period_end);
+            const failedChats = (report.coverage || []).filter(item => item.status === 'fetch_error');
+            container.innerHTML = `
+                <div class="alert alert-success">
+                    <strong>тематический отчёт готов</strong><br>
+                    <span style="font-size:13px;color:#666;">${escapeHtml(report.complex_name)} • ${startDate.toLocaleString('ru-RU')} — ${endDate.toLocaleString('ru-RU')}</span><br>
+                    <span style="font-size:12px;color:#666;">Проверено сообщений: ${Number(report.message_count || 0)}, найдено по теме: ${Number(report.matched_message_count || 0)}, источников с контекстом: ${Number(report.evidence_count || 0)}</span>
+                </div>
+                <div class="report-section">
+                    <div class="report-header">${escapeHtml(report.complex_name)}</div>
+                    <div class="report-chat">
+                        <textarea id="thematic-summary" class="report-content" style="width:100%;min-height:520px;">${escapeHtml(report.summary || '')}</textarea>
+                        ${failedChats.length ? `<div class="alert alert-error" style="margin-top:10px;">Не удалось прочитать чаты: ${failedChats.map(item => escapeHtml(item.chat_name)).join(', ')}</div>` : ''}
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+                            <button class="btn btn-secondary btn-small" onclick="copyThematicReport()">Копировать</button>
+                            <button class="btn btn-secondary btn-small" onclick="saveThematicReport(false)">Сохранить в базу</button>
+                            <button class="btn btn-success btn-small" onclick="saveThematicReport(true)">Отправить в MAX</button>
+                            <span id="thematic-save-status" style="font-size:13px;color:#666;"></span>
+                        </div>
+                    </div>
+                </div>`;
+            bindAutoResizeTextareas(container);
+        }
+
+        function copyThematicReport() {
+            const text = document.getElementById('thematic-summary')?.value || '';
+            navigator.clipboard.writeText(text).then(() => alert('Тематический отчёт скопирован'));
+        }
+
+        async function saveThematicReport(sendToMax) {
+            if (!lastThematicReport) return;
+            const text = document.getElementById('thematic-summary')?.value.trim() || '';
+            if (!text) return alert('Отчёт пустой');
+            const status = document.getElementById('thematic-save-status');
+            status.textContent = sendToMax ? 'отправляю...' : 'сохраняю...';
+            try {
+                const endpoint = sendToMax ? '/api/reports/send-to-max' : '/api/reports/save';
+                await api(endpoint, 'POST', {
+                    report_type: 'thematic',
+                    complex_id: lastThematicReport.complex_id,
+                    complex_name: lastThematicReport.complex_name,
+                    period_start: lastThematicReport.period_start,
+                    period_end: lastThematicReport.period_end,
+                    original_text: lastThematicReport.summary || '',
+                    edited_text: text,
+                    archive_to_google_doc: !sendToMax
+                });
+                lastThematicReport.summary = text;
+                status.textContent = sendToMax ? 'отправлено в MAX' : 'сохранено';
+                status.style.color = '#2e7d32';
+            } catch (e) {
+                status.textContent = 'ошибка';
+                status.style.color = '#c62828';
+                alert('Ошибка: ' + e.message);
+            }
         }
 
         let lastWeeklyReport = null;

@@ -175,6 +175,36 @@ class GenerateWeeklyReportRequest(BaseModel):
         return parse_flexible_datetime(value)
 
 
+class GenerateThematicReportRequest(BaseModel):
+    complex_id: int
+    chat_ids: Optional[list[int]] = None
+    start_date: str
+    end_date: str
+    instructions: str
+
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_dates(cls, v):
+        parse_flexible_datetime(v)
+        return v
+
+    @field_validator('instructions')
+    @classmethod
+    def validate_instructions(cls, v):
+        value = str(v or '').strip()
+        if not value:
+            raise ValueError('Заполните поле «Что нужно выяснить»')
+        if len(value) > 40_000:
+            raise ValueError('Регламент тематического отчёта слишком длинный')
+        return value
+
+    def get_start_date(self) -> datetime:
+        return parse_flexible_datetime(self.start_date)
+
+    def get_end_date(self) -> datetime:
+        return parse_flexible_datetime(self.end_date)
+
+
 class ComplexMaxTargetRequest(BaseModel):
     max_account_id: Optional[int] = None
     max_chat_id: Optional[int] = None
