@@ -818,6 +818,12 @@
             gap: 7px;
         }
 
+        #thematic-chats {
+            flex-direction: column;
+            flex-wrap: nowrap;
+            width: 100%;
+        }
+
         #report-complexes label, #weekly-complexes label, #thematic-chats label {
             display: inline-flex !important;
             align-items: center;
@@ -831,6 +837,28 @@
             font-size: 12.5px !important;
             font-weight: 500;
             white-space: nowrap;
+        }
+
+        #thematic-chats label {
+            display: flex !important;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+            border-radius: 12px;
+            white-space: normal;
+        }
+
+        #thematic-chats label input {
+            flex: 0 0 auto;
+            width: 18px !important;
+            height: 18px;
+            margin: 0;
+        }
+
+        #thematic-chats label > span {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            line-height: 1.35;
         }
 
         #negativists-chats {
