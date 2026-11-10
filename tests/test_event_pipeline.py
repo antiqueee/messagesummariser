@@ -472,6 +472,54 @@ class VerifierFallbackTests(unittest.IsolatedAsyncioTestCase):
             ["openai/gpt-5.6-luna-pro", "qwen/qwen3.8-flash"],
         )
 
+    async def test_transport_disconnect_moves_to_approved_fallback(self):
+        summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
+        requested_models = []
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "Сжатый материал"},
+                    }],
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, headers, content):
+                model = json.loads(content)["model"]
+                requested_models.append(model)
+                if model == "google/gemini-3.8-flash":
+                    raise httpx.RemoteProtocolError(
+                        "Server disconnected without sending a response"
+                    )
+                return FakeResponse()
+
+        with patch("app.summarizer.httpx.AsyncClient", FakeClient):
+            result = await summarizer._call_api(
+                "test",
+                model_override="google/gemini-3.8-flash",
+                model_fallbacks=["google/gemini-3.7-flash"],
+                purpose="thematic_reduce",
+            )
+
+        self.assertEqual(result, "Сжатый материал")
+        self.assertEqual(
+            requested_models,
+            ["google/gemini-3.8-flash", "google/gemini-3.7-flash"],
+        )
+
     async def test_security_policy_error_moves_to_approved_fallback(self):
         summarizer = ChatSummarizer("test", "google/gemini-3.8-flash")
         requested_models = []

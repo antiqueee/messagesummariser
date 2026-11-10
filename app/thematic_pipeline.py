@@ -14,6 +14,45 @@ from typing import Any
 from .event_pipeline import author_id, message_id
 
 
+def pack_thematic_text_blocks(
+        blocks: list[str],
+        max_chars: int,
+) -> list[str]:
+    """Pack text blocks into bounded groups without dropping oversized input."""
+    limit = max(1, int(max_chars))
+    normalized: list[str] = []
+    for raw_block in blocks:
+        block = str(raw_block or "").strip()
+        if not block:
+            continue
+        if len(block) <= limit:
+            normalized.append(block)
+            continue
+        # Messenger messages are normally far below this limit. Slicing is a
+        # last-resort safeguard for an unexpectedly huge individual record and
+        # preserves every character instead of silently truncating it.
+        normalized.extend(
+            block[start:start + limit]
+            for start in range(0, len(block), limit)
+        )
+
+    groups: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+    separator_chars = 2
+    for block in normalized:
+        required = len(block) + (separator_chars if current else 0)
+        if current and current_chars + required > limit:
+            groups.append("\n\n".join(current))
+            current = []
+            current_chars = 0
+        current.append(block)
+        current_chars += len(block) + (separator_chars if len(current) > 1 else 0)
+    if current:
+        groups.append("\n\n".join(current))
+    return groups
+
+
 def thematic_ref(source: str, chat_id: Any, message: dict) -> str:
     """Return an unambiguous reference even when messengers reuse message IDs."""
     return f"{source}:{chat_id}:{message_id(message)}"

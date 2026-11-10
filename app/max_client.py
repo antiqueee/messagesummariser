@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import base64
 import os
 import re
 from datetime import datetime
@@ -8,8 +9,9 @@ from typing import Optional
 
 MAX_SESSIONS_DIR = Path(__file__).parent.parent / "sessions" / "max"
 MAX_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_MAX_APP_VERSION = "26.25.0"
-DEFAULT_MAX_BUILD_NUMBER = 6790
+DEFAULT_MAX_APP_VERSION = "26.35.1"
+DEFAULT_MAX_BUILD_NUMBER = 6867
+DEFAULT_MAX_WEB_APP_VERSION = "26.8.4"
 
 
 class MaxClientManager:
@@ -23,6 +25,7 @@ class MaxClientManager:
         self._phones: dict[int, str] = {}
         self._auth_tokens: dict[int, str] = {}
         self._password_challenges: dict[int, dict] = {}
+        self._qr_auth: dict[int, dict] = {}
         self._patch_pymax_socket_unpacker()
         self._patch_pymax_contact_attach_parser()
         self._patch_pymax_audio_attach_parser()
@@ -238,6 +241,9 @@ class MaxClientManager:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def _get_transport_marker(self, account_id: int) -> Path:
+        return Path(self._get_work_dir(account_id)) / "transport.txt"
+
     @staticmethod
     def _build_user_agent():
         """Build a currently supported Max fingerprint for pymax 1.x."""
@@ -260,6 +266,28 @@ class MaxClientManager:
             app_version=app_version or DEFAULT_MAX_APP_VERSION,
             build_number=build_number,
         )
+
+    @staticmethod
+    def _build_web_user_agent():
+        """Build the browser fingerprint required by Max QR authorization."""
+        from pymax.payloads import UserAgentPayload
+
+        return UserAgentPayload(
+            device_type="WEB",
+            app_version=os.getenv(
+                "MAX_WEB_APP_VERSION", DEFAULT_MAX_WEB_APP_VERSION
+            ).strip() or DEFAULT_MAX_WEB_APP_VERSION,
+        )
+
+    @staticmethod
+    def _qr_data_url(qr_url: str) -> str:
+        """Render a QR login link as an SVG data URL for the web UI."""
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+
+        image = qrcode.make(qr_url, image_factory=SvgPathImage, border=2)
+        payload = image.to_string(encoding="unicode").encode("utf-8")
+        return "data:image/svg+xml;base64," + base64.b64encode(payload).decode("ascii")
 
     def _is_socket_connected(self, account_id: int) -> bool:
         client = self._clients.get(account_id)
@@ -286,6 +314,12 @@ class MaxClientManager:
             or "connection" in err_text
             or "socket" in err_text
             or "timed out" in err_text
+            # Max can accept login/sync and still reject the first API call
+            # while the server-side session is transitioning to ONLINE.
+            # Treat that short-lived proto.state response like a dropped socket
+            # so history reads reconnect and retry instead of aborting a report.
+            or "must be online session" in err_text
+            or "proto.state" in err_text
         )
 
     def _extract_message_datetime(self, msg) -> Optional[datetime]:
@@ -541,6 +575,166 @@ class MaxClientManager:
                     raise RuntimeError(f"No Max client for account {account_id} after reconnect")
                 await asyncio.sleep(2.0)
 
+    async def start_qr_auth(self, account_id: int, phone: str) -> dict:
+        """Start a Max Web QR login and return the QR image immediately."""
+        async with self._get_lock(account_id):
+            if account_id in self._tasks or account_id in self._clients:
+                await self._disconnect_account_unlocked(account_id)
+
+            self._phones[account_id] = phone
+            self._qr_auth.pop(account_id, None)
+            work_dir = Path(self._get_work_dir(account_id))
+            session_db = work_dir / "session.db"
+            if session_db.exists():
+                session_db.unlink()
+            self._get_transport_marker(account_id).unlink(missing_ok=True)
+
+            try:
+                from pymax import MaxClient
+
+                client = MaxClient(
+                    phone=phone,
+                    work_dir=str(work_dir),
+                    headers=self._build_web_user_agent(),
+                    send_fake_telemetry=False,
+                    reconnect=False,
+                )
+                self._clients[account_id] = client
+                self._ready[account_id] = asyncio.Event()
+
+                await client.connect(client.user_agent)
+                qr_info = await client._request_qr_login()
+                qr_url = qr_info.get("qrLink")
+                track_id = qr_info.get("trackId")
+                expires_at = qr_info.get("expiresAt")
+                polling_interval = qr_info.get("pollingInterval")
+                if not all((qr_url, track_id, expires_at, polling_interval)):
+                    raise RuntimeError("Max вернул неполные данные QR-авторизации")
+
+                state = {
+                    "status": "pending",
+                    "message": "Отсканируйте QR-код в приложении Max.",
+                    "qr_url": qr_url,
+                    "track_id": track_id,
+                    "expires_at": expires_at,
+                    "polling_interval": polling_interval,
+                }
+                self._qr_auth[account_id] = state
+                task = asyncio.create_task(
+                    self._poll_and_complete_qr_auth(account_id, client)
+                )
+                self._tasks[account_id] = task
+                return {
+                    "status": "pending",
+                    "message": state["message"],
+                    "qr_image": self._qr_data_url(qr_url),
+                    "qr_url": qr_url,
+                    "expires_at": expires_at,
+                }
+            except Exception as e:
+                self._qr_auth[account_id] = {
+                    "status": "error",
+                    "message": str(e),
+                }
+                await self._disconnect_account_unlocked(account_id)
+                raise RuntimeError(f"Не удалось создать QR-код Max: {e}") from e
+
+    async def _poll_and_complete_qr_auth(self, account_id: int, client) -> None:
+        state = self._qr_auth.get(account_id)
+        if not state:
+            return
+        try:
+            confirmed = await client._poll_qr_login(
+                state["track_id"], state["polling_interval"]
+            )
+            if not confirmed:
+                state.update(status="expired", message="QR-код Max истёк.")
+                await client._cleanup_client()
+                return
+
+            response = await client._get_qr_login_data(state["track_id"])
+            login_attrs = response.get("tokenAttrs", {}).get("LOGIN", {})
+            token = login_attrs.get("token")
+            challenge = response.get("passwordChallenge")
+            if challenge and not token:
+                state.update(
+                    status="password_required",
+                    message="QR подтверждён. Введите пароль двухфакторной аутентификации Max.",
+                    password_challenge=challenge,
+                )
+                return
+            if not token:
+                raise RuntimeError("Max не вернул токен после подтверждения QR")
+
+            await self._activate_qr_session(account_id, client, token)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            state.update(status="error", message=str(e))
+            self._mark_disconnected(account_id)
+            try:
+                await client._cleanup_client()
+            except Exception:
+                pass
+
+    async def _activate_qr_session(self, account_id: int, client, token: str) -> None:
+        """Persist the web token, sync it and keep the QR-authenticated client alive."""
+        state = self._qr_auth.setdefault(account_id, {})
+        client._token = token
+        client._database.update_auth_token(client._device_id, token)
+        self._get_transport_marker(account_id).write_text("web\n", encoding="utf-8")
+
+        await client._sync(client.user_agent)
+        await client._post_login_tasks(sync=False)
+        self._ready[account_id].set()
+        state.update(status="success", message="Max аккаунт авторизован по QR.")
+        try:
+            await client._wait_forever()
+        finally:
+            self._mark_disconnected(account_id)
+            await client._cleanup_client()
+
+    def qr_auth_status(self, account_id: int) -> dict:
+        state = self._qr_auth.get(account_id)
+        if not state:
+            return {"status": "not_started", "message": "Сначала создайте QR-код Max"}
+        return {
+            "status": state.get("status", "pending"),
+            "message": state.get("message", ""),
+            "expires_at": state.get("expires_at"),
+        }
+
+    async def complete_qr_password(self, account_id: int, password: str) -> dict:
+        """Finish QR login when the Max account has a 2FA password."""
+        password = (password or "").strip()
+        if not password:
+            raise RuntimeError("Введите пароль двухфакторной аутентификации Max")
+
+        async with self._get_lock(account_id):
+            state = self._qr_auth.get(account_id)
+            client = self._clients.get(account_id)
+            challenge = state.get("password_challenge") if state else None
+            if not state or state.get("status") != "password_required" or not client or not challenge:
+                raise RuntimeError("QR-авторизация Max не ожидает пароль")
+
+            token_attrs = await client._check_password(password, challenge["trackId"])
+            token = (token_attrs or {}).get("LOGIN", {}).get("token")
+            if not token:
+                return {
+                    "status": "password_required",
+                    "message": "Пароль не принят. Проверьте его и попробуйте ещё раз.",
+                }
+
+            task = asyncio.create_task(
+                self._activate_qr_session(account_id, client, token)
+            )
+            self._tasks[account_id] = task
+            try:
+                await asyncio.wait_for(self._ready[account_id].wait(), timeout=30.0)
+            except asyncio.TimeoutError as e:
+                raise RuntimeError("Max принял пароль, но сессия не успела подключиться") from e
+            return {"status": "success", "message": "Max аккаунт авторизован по QR."}
+
     async def start_auth(self, account_id: int, phone: str, force_code: bool = False) -> dict:
         """Start Max authentication by launching client in background"""
         async with self._get_lock(account_id):
@@ -556,11 +750,17 @@ class MaxClientManager:
                 session_db = Path(self._get_work_dir(account_id)) / "session.db"
                 if session_db.exists():
                     session_db.unlink()
+                self._get_transport_marker(account_id).unlink(missing_ok=True)
 
             try:
-                from pymax import SocketMaxClient
-                ua = self._build_user_agent()
-                client = SocketMaxClient(
+                from pymax import MaxClient, SocketMaxClient
+                use_web = (
+                    self._get_transport_marker(account_id).exists()
+                    and self._get_transport_marker(account_id).read_text(encoding="utf-8").strip() == "web"
+                )
+                client_class = MaxClient if use_web else SocketMaxClient
+                ua = self._build_web_user_agent() if use_web else self._build_user_agent()
+                client = client_class(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
                     headers=ua,

@@ -34,6 +34,10 @@ Thumbs.db
 
 # Logs
 *.log
+screenlog.*
+
+# Internal operational exports (contain account and chat identifiers)
+docs/monitoring-chats-by-account.md
 
 # Google Service Account credentials (never commit!)
 *.json

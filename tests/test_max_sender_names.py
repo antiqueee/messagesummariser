@@ -31,7 +31,10 @@ class FakeHistoryClient:
 
     async def fetch_history(self, **kwargs):
         self.calls += 1
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class FakeEngine:
@@ -160,8 +163,49 @@ class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict("os.environ", {}, clear=True):
             user_agent = MaxClientManager._build_user_agent()
 
-        self.assertEqual(user_agent.app_version, "26.25.0")
-        self.assertEqual(user_agent.build_number, 6790)
+        self.assertEqual(user_agent.app_version, "26.35.1")
+        self.assertEqual(user_agent.build_number, 6867)
+
+    def test_qr_login_uses_web_fingerprint_and_svg_data_url(self):
+        with patch.dict("os.environ", {}, clear=True):
+            user_agent = MaxClientManager._build_web_user_agent()
+
+        self.assertEqual(user_agent.device_type, "WEB")
+        self.assertEqual(user_agent.app_version, "26.8.4")
+        qr_image = MaxClientManager._qr_data_url("max://qr/example")
+        self.assertTrue(qr_image.startswith("data:image/svg+xml;base64,"))
+
+    async def test_online_state_error_reconnects_and_retries_history(self):
+        manager = MaxClientManager()
+        online_error = RuntimeError(
+            "PyMax Error: Must be ONLINE session (Недопустимое состояние сессии) "
+            "[proto.state]"
+        )
+        first_client = FakeHistoryClient([online_error])
+        recovered = [SimpleNamespace(id=42)]
+        second_client = FakeHistoryClient([recovered])
+        manager._clients[9] = first_client
+
+        async def reconnect(account_id, force_restart=False):
+            self.assertEqual(account_id, 9)
+            self.assertTrue(force_restart)
+            manager._clients[9] = second_client
+            return True
+
+        with (
+            patch.object(manager, "_ensure_runtime_connection", side_effect=reconnect),
+            patch("app.max_client.asyncio.sleep", return_value=None),
+        ):
+            history = await manager._fetch_history_with_retry(
+                account_id=9,
+                chat_id=-123,
+                from_time=1_000,
+                backward=200,
+            )
+
+        self.assertEqual(first_client.calls, 1)
+        self.assertEqual(second_client.calls, 1)
+        self.assertEqual(history, recovered)
 
     def test_user_profile_contains_identity_avatar_and_deep_link(self):
         user = SimpleNamespace(

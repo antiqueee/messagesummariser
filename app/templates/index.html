@@ -1927,11 +1927,17 @@
 
     <div id="max-auth-modal" class="modal">
         <div class="modal-content">
-            <h3 class="modal-title">Код Max</h3>
+            <h3 class="modal-title">Авторизация Max</h3>
             <p id="max-auth-message" style="margin-bottom: 15px; color: #666;"></p>
-            <div class="form-group">
+            <div class="form-group" id="max-auth-code-group">
                 <label>Код из SMS или приложения Max:</label>
                 <input type="text" id="max-auth-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+            </div>
+            <div id="max-auth-qr-group" style="display:none; text-align:center; margin-bottom:18px;">
+                <img id="max-auth-qr-image" alt="QR-код Max" style="width:280px; max-width:100%; background:white; padding:8px; border-radius:12px;">
+                <p style="margin-top:10px; color:#666; font-size:13px; line-height:1.45;">
+                    В приложении Max откройте Настройки → Устройства → Подключить устройство и отсканируйте код.
+                </p>
             </div>
             <div class="form-group" id="max-auth-password-group" style="display:none;">
                 <label>Пароль двухфакторной аутентификации Max:</label>
@@ -2071,6 +2077,8 @@
         let telegramQrPollTimer = null;
         let telegramQrMode = false;
         let currentMaxAuthAccountId = null;
+        let maxQrPollTimer = null;
+        let maxQrMode = false;
 
         // Tab switching
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2105,6 +2113,10 @@
             if (id === 'auth-modal' && telegramQrPollTimer) {
                 clearInterval(telegramQrPollTimer);
                 telegramQrPollTimer = null;
+            }
+            if (id === 'max-auth-modal' && maxQrPollTimer) {
+                clearInterval(maxQrPollTimer);
+                maxQrPollTimer = null;
             }
         }
 
@@ -2546,12 +2558,13 @@
                     badges: acc.is_send_only ? '<span class="badge badge-warning">только отправка</span>' : '',
                     actions: `
                         ${!acc.is_authorized
-                            ? `<button class="btn btn-primary btn-small" onclick="startMaxAuth(${acc.id})">Авторизовать</button>`
+                            ? `<button class="btn btn-primary btn-small" onclick="startMaxQrAuth(${acc.id})">Войти по QR</button>
+                               <button class="btn btn-secondary btn-small" onclick="startMaxAuth(${acc.id})">Войти по коду</button>`
                             : acc.is_send_only
                                 ? `<button class="btn btn-success btn-small" onclick="syncMaxDeliveryChats(${acc.id})">Синхр. чаты отправки</button>
-                                   <button class="btn btn-secondary btn-small" onclick="startMaxAuth(${acc.id}, true)">Переавторизовать</button>`
+                                   <button class="btn btn-secondary btn-small" onclick="startMaxQrAuth(${acc.id})">Переавторизовать по QR</button>`
                                 : `<button class="btn btn-success btn-small" onclick="syncMaxChats(${acc.id})">Синхронизировать</button>
-                                   <button class="btn btn-secondary btn-small" onclick="startMaxAuth(${acc.id}, true)">Переавторизовать</button>
+                                   <button class="btn btn-secondary btn-small" onclick="startMaxQrAuth(${acc.id})">Переавторизовать по QR</button>
                                    <button class="btn btn-secondary btn-small" onclick="openMaxServiceMessages(${acc.id})">Сообщения Max</button>
                                    <button class="btn btn-secondary btn-small" onclick="showAddMaxChatModal(${acc.id})">+ Вручную</button>`}
                         <button class="btn btn-danger btn-small" onclick="deleteMaxAccount(${acc.id})">Удалить</button>
@@ -2597,6 +2610,7 @@
         }
 
         async function startMaxAuth(accountId, forceCode = false) {
+            maxQrMode = false;
             try {
                 const suffix = forceCode ? '?force_code=true' : '';
                 const result = await api(`/api/max/accounts/${accountId}/auth/start${suffix}`, 'POST');
@@ -2611,6 +2625,10 @@
                 document.getElementById('max-auth-code').value = '';
                 document.getElementById('max-auth-password').value = '';
                 document.getElementById('max-auth-password-group').style.display = 'none';
+                document.getElementById('max-auth-code-group').style.display = '';
+                document.getElementById('max-auth-qr-group').style.display = 'none';
+                document.getElementById('max-auth-submit-btn').style.display = '';
+                document.getElementById('max-auth-resend-btn').style.display = '';
                 showModal('max-auth-modal');
                 setTimeout(() => document.getElementById('max-auth-code').focus(), 50);
             } catch (e) {
@@ -2623,7 +2641,7 @@
             const password = document.getElementById('max-auth-password').value;
             const messageEl = document.getElementById('max-auth-message');
             const submitBtn = document.getElementById('max-auth-submit-btn');
-            if (!code) {
+            if (!maxQrMode && !code) {
                 alert('Введите код Max');
                 return;
             }
@@ -2635,6 +2653,21 @@
             submitBtn.textContent = 'Проверяю...';
             messageEl.textContent = 'Проверяю код Max...';
             try {
+                if (maxQrMode) {
+                    const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/qr/password`, 'POST', {
+                        account_id: currentMaxAuthAccountId,
+                        code: '',
+                        password: password || null
+                    });
+                    if (result.status !== 'success') {
+                        messageEl.textContent = result.message || 'Пароль не принят.';
+                        return;
+                    }
+                    closeModal('max-auth-modal');
+                    alert('Авторизация Max по QR успешна!');
+                    loadMaxAccounts();
+                    return;
+                }
                 const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/verify`, 'POST', {
                     account_id: currentMaxAuthAccountId,
                     code,
@@ -2683,6 +2716,58 @@
             } finally {
                 resendBtn.disabled = false;
                 resendBtn.textContent = 'Отправить код еще раз';
+            }
+        }
+
+        async function startMaxQrAuth(accountId) {
+            currentMaxAuthAccountId = accountId;
+            maxQrMode = true;
+            if (maxQrPollTimer) clearInterval(maxQrPollTimer);
+            document.getElementById('max-auth-message').textContent = 'Создаю QR-код Max…';
+            document.getElementById('max-auth-code-group').style.display = 'none';
+            document.getElementById('max-auth-password-group').style.display = 'none';
+            document.getElementById('max-auth-qr-group').style.display = '';
+            document.getElementById('max-auth-submit-btn').style.display = 'none';
+            document.getElementById('max-auth-resend-btn').style.display = 'none';
+            showModal('max-auth-modal');
+            try {
+                const result = await api(`/api/max/accounts/${accountId}/auth/qr/start`, 'POST');
+                document.getElementById('max-auth-qr-image').src = result.qr_image;
+                document.getElementById('max-auth-message').textContent =
+                    'Отсканируйте QR-код в приложении Max. Код из сообщения не нужен.';
+                maxQrPollTimer = setInterval(pollMaxQrStatus, 1500);
+            } catch (e) {
+                document.getElementById('max-auth-message').textContent = 'Ошибка QR-входа: ' + e.message;
+            }
+        }
+
+        async function pollMaxQrStatus() {
+            if (!currentMaxAuthAccountId || !maxQrMode) return;
+            try {
+                const result = await api(`/api/max/accounts/${currentMaxAuthAccountId}/auth/qr/status`);
+                if (result.status === 'success') {
+                    clearInterval(maxQrPollTimer);
+                    maxQrPollTimer = null;
+                    closeModal('max-auth-modal');
+                    await loadMaxAccounts();
+                    alert('Max-аккаунт авторизован по QR!');
+                } else if (result.status === 'password_required') {
+                    clearInterval(maxQrPollTimer);
+                    maxQrPollTimer = null;
+                    document.getElementById('max-auth-message').textContent = result.message;
+                    document.getElementById('max-auth-qr-group').style.display = 'none';
+                    document.getElementById('max-auth-password-group').style.display = '';
+                    document.getElementById('max-auth-submit-btn').style.display = '';
+                    document.getElementById('max-auth-password').focus();
+                } else if (result.status === 'expired' || result.status === 'error') {
+                    clearInterval(maxQrPollTimer);
+                    maxQrPollTimer = null;
+                    document.getElementById('max-auth-message').textContent = result.status === 'expired'
+                        ? 'QR-код истёк. Закройте окно и нажмите «Войти по QR» ещё раз.'
+                        : 'Ошибка QR-входа: ' + (result.message || 'неизвестная ошибка');
+                }
+            } catch (e) {
+                console.warn('Max QR status error:', e);
             }
         }
 

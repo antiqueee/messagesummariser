@@ -23,6 +23,7 @@ from .thematic_pipeline import (
     collect_candidate_refs,
     expand_thematic_evidence,
     format_thematic_evidence,
+    pack_thematic_text_blocks,
 )
 
 
@@ -159,8 +160,37 @@ THEMATIC_FINAL_PROMPT = """Ты — аналитик, готовящий раз�
 ПОКРЫТИЕ ИСТОЧНИКОВ:
 {coverage_json}
 
-ПРОВЕРЕННЫЕ ИСХОДНЫЕ СООБЩЕНИЯ:
+ПРОВЕРЕННЫЕ ИСХОДНЫЕ СООБЩЕНИЯ ИЛИ ИХ МНОГОУРОВНЕВЫЙ КОНСПЕКТ:
 {evidence}
+"""
+
+THEMATIC_REDUCE_PROMPT = """Ты выполняешь промежуточный этап большого тематического исследования.
+Сожми переданную часть материалов в плотный аналитический конспект для следующего этапа, не создавая
+финальный отчёт и не отвечая на задачу выборочно.
+
+ОРИГИНАЛЬНАЯ ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:
+<user_task>
+{instructions}
+</user_task>
+
+Обязательные правила:
+1. Сохрани все факты, версии, отрицания, противоречия, хронологию, числовые данные и позиции авторов,
+   которые могут быть полезны для задачи.
+2. Не добавляй сведений, которых нет в материалах.
+3. Сохраняй точные ref, chat, date, message_id, author и link у каждого существенного утверждения,
+   если они присутствуют во входе. Не придумывай идентификаторы и ссылки.
+4. Явно различай факт сообщения, утверждение участника и аналитический вывод.
+5. Если вход уже является конспектом предыдущего уровня, аккуратно объединяй повторы, но не теряй
+   уникальные факты и ссылки на первоисточники.
+6. Выведи только конспект. Он должен быть существенно короче входа и пригоден для последующего слияния.
+
+ЖК: {complex_name}
+Период: {start_date} — {end_date}
+Уровень сжатия: {round_number}
+Порция: {batch_number} из {batch_count}
+
+МАТЕРИАЛЫ:
+{materials}
 """
 
 THEMATIC_CANDIDATE_SCHEMA = {
@@ -996,6 +1026,7 @@ class ChatSummarizer:
             "daily_report_render": ("AI_RENDER_TIMEOUT_SECONDS", 60),
             "weekly_report": ("AI_WEEKLY_TIMEOUT_SECONDS", 120),
             "thematic_scan": ("AI_THEMATIC_SCAN_TIMEOUT_SECONDS", 90),
+            "thematic_reduce": ("AI_THEMATIC_REDUCE_TIMEOUT_SECONDS", 120),
             "thematic_render": ("AI_THEMATIC_RENDER_TIMEOUT_SECONDS", 120),
         }
         env_name, default = role_timeouts.get(
@@ -1073,6 +1104,8 @@ class ChatSummarizer:
                 attempt_payload["max_completion_tokens"] = (
                     int(os.getenv("AI_VERIFIER_MAX_TOKENS", "32768"))
                     if model_attempt.startswith("openai/gpt-5.6-luna")
+                    else int(os.getenv("AI_THEMATIC_REDUCE_MAX_TOKENS", "4096"))
+                    if purpose == "thematic_reduce"
                     else int(os.getenv("AI_THEMATIC_MAX_TOKENS", "16384"))
                     if purpose == "thematic_render"
                     else int(os.getenv("AI_EXTRACTION_MAX_TOKENS", "16384"))
@@ -1107,6 +1140,17 @@ class ChatSummarizer:
                         if attempt < attempts:
                             await asyncio.sleep(2)
                             continue
+                        break
+                    except httpx.HTTPError as exc:
+                        last_error = f"transport error: {exc}"
+                        print(
+                            f"[API] Transport error with {model_attempt}: {last_error}",
+                            flush=True,
+                        )
+                        if attempt < attempts:
+                            await asyncio.sleep(2)
+                            continue
+                        # Continue with the next explicitly approved fallback.
                         break
 
                     print(f"[API] Response status: {response.status_code}")
@@ -1421,7 +1465,7 @@ class ChatSummarizer:
             end_date: datetime,
             instructions: str,
             coverage: list[dict] | None = None,
-            progress: Optional[Callable[[int, int], Awaitable[None]]] = None,
+            progress: Optional[Callable[..., Awaitable[None]]] = None,
     ) -> dict:
         """Answer an arbitrary research prompt from validated source messages."""
         instructions = (instructions or "").strip()
@@ -1507,14 +1551,100 @@ class ChatSummarizer:
                 ),
             })
 
-        evidence_text = format_thematic_evidence(evidence)
+        evidence_blocks = [format_thematic_evidence([item]) for item in evidence]
+        evidence_text = "\n".join(evidence_blocks)
+        try:
+            direct_evidence_chars = max(
+                20_000,
+                int(os.getenv("AI_THEMATIC_DIRECT_EVIDENCE_CHARS", "120000")),
+            )
+        except (TypeError, ValueError):
+            direct_evidence_chars = 120_000
+        try:
+            reduce_batch_chars = max(
+                10_000,
+                int(os.getenv("AI_THEMATIC_REDUCE_BATCH_CHARS", "90000")),
+            )
+        except (TypeError, ValueError):
+            reduce_batch_chars = 90_000
+
+        reduction_rounds = 0
+        reduction_calls = 0
+        render_materials = evidence_text or "Релевантные сообщения поисковым этапом не найдены."
+        material_blocks = evidence_blocks
+
+        # A map/reduce tree keeps every OpenRouter request bounded regardless
+        # of the selected date range. Each reducer output is capped separately,
+        # and another level is added automatically until the final payload is
+        # small enough for a stable render call.
+        while material_blocks and len("\n\n".join(material_blocks)) > direct_evidence_chars:
+            reduction_rounds += 1
+            groups = pack_thematic_text_blocks(material_blocks, reduce_batch_chars)
+            if progress:
+                await progress(
+                    0,
+                    len(groups),
+                    (
+                        f"Уровень {reduction_rounds}: обрабатываю порций — {len(groups)}. "
+                        "Ссылки на исходные сообщения сохраняются."
+                    ),
+                )
+
+            async def reduce_group(batch_number: int, materials: str) -> str:
+                prompt = THEMATIC_REDUCE_PROMPT.format(
+                    instructions=instructions,
+                    complex_name=complex_name,
+                    start_date=start_date.strftime("%d.%m.%Y %H:%M"),
+                    end_date=end_date.strftime("%d.%m.%Y %H:%M"),
+                    round_number=reduction_rounds,
+                    batch_number=batch_number,
+                    batch_count=len(groups),
+                    materials=materials,
+                )
+                async with semaphore:
+                    return (await self._call_api(
+                        prompt,
+                        purpose="thematic_reduce",
+                    )).strip()
+
+            reduced_blocks = await asyncio.gather(*(
+                reduce_group(index, group)
+                for index, group in enumerate(groups, start=1)
+            ))
+            reduction_calls += len(groups)
+            material_blocks = [
+                block for block in reduced_blocks
+                if isinstance(block, str) and block.strip()
+            ]
+            if not material_blocks:
+                raise RuntimeError(
+                    "Промежуточное сжатие тематического отчёта вернуло пустой результат"
+                )
+            render_materials = "\n\n".join(material_blocks)
+            if progress:
+                await progress(
+                    len(groups),
+                    len(groups),
+                    (
+                        f"Уровень {reduction_rounds} завершён. "
+                        f"Осталось материалов: {len(render_materials):,} символов."
+                    ).replace(",", " "),
+                )
+
+            # The completion cap normally makes every round much smaller. This
+            # guard prevents an endless loop if a provider ignores that cap.
+            if reduction_rounds >= 12 and len(render_materials) > direct_evidence_chars:
+                raise RuntimeError(
+                    "Не удалось безопасно уменьшить объём тематического отчёта за 12 этапов"
+                )
+
         final_prompt = THEMATIC_FINAL_PROMPT.format(
             instructions=instructions,
             complex_name=complex_name,
             start_date=start_date.strftime("%d.%m.%Y %H:%M"),
             end_date=end_date.strftime("%d.%m.%Y %H:%M"),
             coverage_json=json.dumps(public_coverage, ensure_ascii=False),
-            evidence=evidence_text or "Релевантные сообщения поисковым этапом не найдены.",
+            evidence=render_materials,
         )
         summary_text = (await self._call_api(
             final_prompt,
@@ -1529,6 +1659,10 @@ class ChatSummarizer:
             "evidence_count": len(evidence),
             "invalid_refs": invalid_refs,
             "scan_errors": scan_errors,
+            "evidence_chars": len(evidence_text),
+            "render_material_chars": len(render_materials),
+            "reduction_rounds": reduction_rounds,
+            "reduction_calls": reduction_calls,
         })
         return {
             "summary_text": summary_text,

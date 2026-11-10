@@ -1185,7 +1185,23 @@ async def _generate_thematic_report_payload(
         current_source="AI",
     )
 
-    async def scan_progress(completed: int, total: int) -> None:
+    async def scan_progress(
+            completed: int,
+            total: int,
+            reduction_detail: str | None = None,
+    ) -> None:
+        if reduction_detail:
+            await emit(
+                status="running",
+                stage="reduce",
+                percent=88,
+                title="Сжимаю большой объём материалов",
+                detail=reduction_detail,
+                current_complex=complex_name,
+                current_chat=None,
+                current_source="AI",
+            )
+            return
         percent = 40 + int((completed / max(1, total)) * 46)
         await emit(
             status="running",
@@ -2012,6 +2028,47 @@ async def resend_max_auth_code(account_id: int):
     try:
         mm = get_max_manager()
         return await mm.resend_auth_code(account_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/max/accounts/{account_id}/auth/qr/start")
+async def start_max_qr_auth(account_id: int):
+    """Create a Max Web QR login session."""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+
+    try:
+        result = await get_max_manager().start_qr_auth(account_id, account["phone"])
+        await db.update_max_account_authorized(account_id, False)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/max/accounts/{account_id}/auth/qr/status")
+async def max_qr_auth_status(account_id: int):
+    """Poll Max QR login state."""
+    result = get_max_manager().qr_auth_status(account_id)
+    if result.get("status") == "success":
+        await db.update_max_account_authorized(account_id, True)
+    return result
+
+
+@app.post("/api/max/accounts/{account_id}/auth/qr/password")
+async def complete_max_qr_password(account_id: int, data: AccountVerifyRequest):
+    """Complete Max QR login when 2FA is enabled."""
+    account = await db.get_max_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Max account not found")
+    try:
+        result = await get_max_manager().complete_qr_password(
+            account_id, data.password or ""
+        )
+        if result.get("status") == "success":
+            await db.update_max_account_authorized(account_id, True)
+        return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
