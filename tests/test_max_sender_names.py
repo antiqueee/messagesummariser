@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.max_client import MaxClientManager
 
@@ -205,6 +205,39 @@ class MaxSenderNameTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first_client.calls, 1)
         self.assertEqual(second_client.calls, 1)
+        self.assertEqual(history, recovered)
+
+    async def test_websocket_send_error_retries_with_smaller_history_page(self):
+        manager = MaxClientManager()
+        first_client = SimpleNamespace(
+            fetch_history=AsyncMock(side_effect=RuntimeError("Send and wait failed")),
+        )
+        recovered = [SimpleNamespace(id=42)]
+        second_client = SimpleNamespace(fetch_history=AsyncMock(return_value=recovered))
+        manager._clients[9] = first_client
+
+        async def reconnect(account_id, force_restart=False):
+            manager._clients[account_id] = second_client
+            return True
+
+        with (
+            patch.object(manager, "_ensure_runtime_connection", side_effect=reconnect) as ensure_connection,
+            patch("app.max_client.asyncio.sleep", return_value=None),
+        ):
+            history = await manager._fetch_history_with_retry(
+                account_id=9,
+                chat_id=-123,
+                from_time=1_000,
+                backward=200,
+            )
+
+        ensure_connection.assert_awaited_once_with(9, force_restart=True)
+        first_client.fetch_history.assert_awaited_once_with(
+            chat_id=-123, from_time=1_000, backward=200,
+        )
+        second_client.fetch_history.assert_awaited_once_with(
+            chat_id=-123, from_time=1_000, backward=50,
+        )
         self.assertEqual(history, recovered)
 
     def test_user_profile_contains_identity_avatar_and_deep_link(self):

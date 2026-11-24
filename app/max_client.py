@@ -310,6 +310,9 @@ class MaxClientManager:
         }
         return (
             err_name in transient_names
+            # pymax's WebSocket transport wraps closed connections and timeouts
+            # in this generic RuntimeError.
+            or (isinstance(error, RuntimeError) and err_text == "send and wait failed")
             or "not connected" in err_text
             or "connection" in err_text
             or "socket" in err_text
@@ -590,9 +593,9 @@ class MaxClientManager:
             self._get_transport_marker(account_id).unlink(missing_ok=True)
 
             try:
-                from pymax import MaxClient
+                from .max_web_client import MaxWebClient
 
-                client = MaxClient(
+                client = MaxWebClient(
                     phone=phone,
                     work_dir=str(work_dir),
                     headers=self._build_web_user_agent(),
@@ -753,13 +756,19 @@ class MaxClientManager:
                 self._get_transport_marker(account_id).unlink(missing_ok=True)
 
             try:
-                from pymax import MaxClient, SocketMaxClient
+                from pymax import SocketMaxClient
                 use_web = (
                     self._get_transport_marker(account_id).exists()
                     and self._get_transport_marker(account_id).read_text(encoding="utf-8").strip() == "web"
                 )
-                client_class = MaxClient if use_web else SocketMaxClient
-                ua = self._build_web_user_agent() if use_web else self._build_user_agent()
+                if use_web:
+                    from .max_web_client import MaxWebClient
+
+                    client_class = MaxWebClient
+                    ua = self._build_web_user_agent()
+                else:
+                    client_class = SocketMaxClient
+                    ua = self._build_user_agent()
                 client = client_class(
                     phone=phone,
                     work_dir=self._get_work_dir(account_id),
@@ -1143,7 +1152,7 @@ class MaxClientManager:
             traceback.print_exc()
             raise RuntimeError(f"Failed to fetch Max messages for chat {chat_id}: {e}") from e
 
-        await self._resolve_message_sender_names(client, messages)
+        await self._resolve_message_sender_names(self._clients.get(account_id), messages)
         messages.sort(key=lambda item: item['date'])
         return messages[:limit]
 

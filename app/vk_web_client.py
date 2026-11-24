@@ -10,6 +10,7 @@ import httpx
 
 
 VK_WEB_PROFILE_DIR = Path(__file__).parent.parent / "sessions" / "vk_web_profile"
+VK_WEB_ORIGIN = "https://vk.ru"
 
 
 class VkWebClientManager:
@@ -26,7 +27,7 @@ class VkWebClientManager:
     async def open_login(self) -> dict:
         async with self._lock:
             page = await self._ensure_page()
-            await page.goto("https://vk.com/im", wait_until="domcontentloaded", timeout=60_000)
+            await page.goto(f"{VK_WEB_ORIGIN}/im", wait_until="domcontentloaded", timeout=60_000)
             await page.bring_to_front()
             return await self.status()
 
@@ -35,7 +36,7 @@ class VkWebClientManager:
         if not page or page.is_closed():
             return {"running": False, "authorized": False, "message": "Браузер VK не запущен"}
 
-        cookies = await self._context.cookies("https://vk.com") if self._context else []
+        cookies = await self._context.cookies(VK_WEB_ORIGIN) if self._context else []
         cookie_names = {cookie.get("name") for cookie in cookies}
         authorized = bool(cookie_names.intersection({"remixsid", "remixsid6"}))
         url = page.url
@@ -83,7 +84,7 @@ class VkWebClientManager:
             page.on("response", remember_response)
             page.on("request", remember_request)
             await page.goto(
-                f"https://vk.ru/im/convo/{peer_id}",
+                f"{VK_WEB_ORIGIN}/im/convo/{peer_id}",
                 wait_until="domcontentloaded",
                 timeout=60_000,
             )
@@ -334,7 +335,7 @@ class VkWebClientManager:
         limit: int,
     ) -> list[dict]:
         await page.goto(
-            f"https://vk.ru/im/convo/{peer_id}",
+            f"{VK_WEB_ORIGIN}/im/convo/{peer_id}",
             wait_until="domcontentloaded",
             timeout=60_000,
         )
@@ -577,7 +578,7 @@ class VkWebClientManager:
         page.on("request", remember_request)
         try:
             await page.goto(
-                f"https://vk.ru/im/convo/{peer_id}",
+                f"{VK_WEB_ORIGIN}/im/convo/{peer_id}",
                 wait_until="domcontentloaded",
                 timeout=60_000,
             )

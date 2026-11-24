@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from app.vk_web_client import VkWebClientManager
 
@@ -94,6 +94,31 @@ class VkWebDateParsingTests(unittest.TestCase):
 
 
 class VkWebFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_status_checks_session_cookies_for_vk_ru(self):
+        client = VkWebClientManager()
+        client._page = Mock(url="https://vk.ru/im")
+        client._page.is_closed.return_value = False
+        client._context = Mock(cookies=AsyncMock(return_value=[{"name": "remixsid"}]))
+
+        status = await client.status()
+
+        client._context.cookies.assert_awaited_once_with("https://vk.ru")
+        self.assertTrue(status["authorized"])
+
+    async def test_open_login_navigates_to_vk_ru_messenger(self):
+        client = VkWebClientManager()
+        page = Mock(goto=AsyncMock(), bring_to_front=AsyncMock())
+        client._ensure_page = AsyncMock(return_value=page)
+        client.status = AsyncMock(return_value={"authorized": False})
+
+        status = await client.open_login()
+
+        page.goto.assert_awaited_once_with(
+            "https://vk.ru/im", wait_until="domcontentloaded", timeout=60_000
+        )
+        page.bring_to_front.assert_awaited_once()
+        self.assertEqual(status, {"authorized": False})
+
     async def test_reopens_page_in_existing_browser_context(self):
         class ClosedPage:
             def is_closed(self):
